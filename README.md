@@ -70,3 +70,7 @@ python start_webapp.py --sam3-repo-dir ./third_party/sam3 --checkpoint ./third_p
 ```text
 http://127.0.0.1:8765/
 ```
+
+## 5. GitHub 同步
+
+后续功能修改建议通过 GitHub 提交并推送，便于保留每次迭代记录。
