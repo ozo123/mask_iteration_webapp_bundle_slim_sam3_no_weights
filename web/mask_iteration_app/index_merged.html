@@ -1,0 +1,2970 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SAM3 Mask Iteration + Validate Tools</title>
+  <style>
+    :root {
+      --bg: #091018;
+      --panel: rgba(15, 24, 33, 0.95);
+      --panel-2: #182432;
+      --border: #2d4254;
+      --text: #edf4fb;
+      --muted: #96abc0;
+      --accent: #63d2ff;
+      --accent-2: #7fe3be;
+      --fg: #30d07f;
+      --bgpt: #ff6a59;
+      --warn: #ffd38d;
+      --compare: #f0b35e;
+      --mask: #2bcbff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(99, 210, 255, 0.14), transparent 24%),
+        radial-gradient(circle at bottom right, rgba(242, 186, 82, 0.1), transparent 20%),
+        linear-gradient(180deg, #071019, #0b131d 38%, #091018);
+    }
+    .page {
+      width: min(1620px, calc(100vw - 20px));
+      margin: 6px auto 16px;
+      display: grid;
+      gap: 8px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 8px;
+      backdrop-filter: blur(12px);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 8px;
+      align-items: end;
+    }
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+    .field label,
+    .section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .span-2 { grid-column: span 2; }
+    .span-3 { grid-column: span 3; }
+    .span-4 { grid-column: span 4; }
+    .span-5 { grid-column: span 5; }
+    .span-6 { grid-column: span 6; }
+    .span-7 { grid-column: span 7; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+    input[type="text"],
+    input[type="range"],
+    input[type="file"],
+    select,
+    textarea,
+    button {
+      width: 100%;
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 6px 8px;
+      font: inherit;
+      font-size: 13px;
+    }
+    input[type="file"] {
+      padding: 6px 8px;
+    }
+    button {
+      cursor: pointer;
+      transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+    }
+    button:hover:not(:disabled) {
+      border-color: rgba(99, 210, 255, 0.45);
+      transform: translateY(-1px);
+    }
+    button:disabled,
+    input:disabled,
+    select:disabled,
+    textarea:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    textarea {
+      min-height: 84px;
+      resize: vertical;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.9fr) minmax(360px, 0.9fr);
+      gap: 10px;
+      align-items: start;
+    }
+    .compact-panel {
+      padding: 8px 10px;
+    }
+    .collapsible-block {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.02);
+      overflow: hidden;
+    }
+    .collapsible-block summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--text);
+      font-weight: 700;
+      user-select: none;
+    }
+    .collapsible-block summary::-webkit-details-marker {
+      display: none;
+    }
+    .collapsible-block summary::after {
+      content: "展开";
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .collapsible-block[open] summary::after {
+      content: "收起";
+    }
+    .collapsible-content {
+      padding: 0 10px 10px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+    .viewer-stack {
+      display: grid;
+      gap: 10px;
+    }
+    .viewer-wrap {
+      min-height: 460px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      overflow: hidden;
+      position: relative;
+      background:
+        linear-gradient(45deg, rgba(255,255,255,0.03) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.03) 75%),
+        linear-gradient(45deg, rgba(255,255,255,0.03) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.03) 75%),
+        #0d131a;
+      background-size: 24px 24px;
+      background-position: 0 0, 12px 12px;
+    }
+    .canvas-stage {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      min-height: inherit;
+    }
+    canvas {
+      display: block;
+      position: absolute;
+      left: 0;
+      top: 0;
+      max-width: none;
+      max-height: none;
+      width: auto;
+      height: auto;
+      border-radius: 14px;
+      background: #0d1117;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+      cursor: grab;
+      user-select: none;
+    }
+    canvas.dragging { cursor: grabbing; }
+    .status,
+    .empty {
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .status {
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.02);
+    }
+    .status.warn {
+      border-color: rgba(255, 211, 141, 0.36);
+      background: rgba(255, 211, 141, 0.08);
+      color: #ffeccc;
+    }
+    .button-row,
+    .toggle-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .button-row button,
+    .toggle-row button {
+      width: auto;
+      min-width: 92px;
+    }
+    .toggle-btn.active-fg {
+      border-color: rgba(48, 208, 127, 0.45);
+      background: rgba(48, 208, 127, 0.16);
+    }
+    .toggle-btn.active-bg {
+      border-color: rgba(255, 106, 89, 0.45);
+      background: rgba(255, 106, 89, 0.16);
+    }
+    .meta-card {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.02);
+      padding: 10px;
+    }
+    .meta-card .k {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .meta-card .v {
+      margin-top: 4px;
+      font-size: 14px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+    .point-list,
+    .history-list,
+    .stroke-list,
+    .validate-list {
+      display: grid;
+      gap: 8px;
+      max-height: 280px;
+      overflow: auto;
+    }
+    .point-card,
+    .history-card,
+    .stroke-card,
+    .validate-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.02);
+      padding: 8px 10px;
+    }
+    .history-card.current {
+      border-color: rgba(99, 210, 255, 0.45);
+      background: rgba(99, 210, 255, 0.1);
+    }
+    .history-card.compare {
+      border-color: rgba(240, 179, 94, 0.45);
+      background: rgba(240, 179, 94, 0.12);
+    }
+    .point-row,
+    .history-row,
+    .stroke-row,
+    .validate-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+    .tool-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .tool-row button {
+      width: auto;
+      min-width: 92px;
+    }
+    .tool-btn.active-tool {
+      border-color: rgba(99, 210, 255, 0.45);
+      background: rgba(99, 210, 255, 0.16);
+    }
+    .prompt-input {
+      min-height: 52px;
+      resize: vertical;
+    }
+    .subtle {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .count-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 28px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(99, 210, 255, 0.12);
+      border: 1px solid rgba(99, 210, 255, 0.22);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .validate-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .validate-card h3 {
+      margin: 0 0 6px;
+      font-size: 14px;
+    }
+    .validate-card pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--text);
+    }
+    .validate-list {
+      max-height: none;
+      overflow: visible;
+    }
+    .validate-list .validate-card {
+      padding: 10px 12px;
+    }
+    .validate-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .validate-meta .pill {
+      font-size: 11px;
+    }
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.16), transparent);
+      margin: 4px 0 10px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .pill.fg {
+      color: #ddf8e8;
+      border-color: rgba(48, 208, 127, 0.35);
+      background: rgba(48, 208, 127, 0.14);
+    }
+    .pill.bg {
+      color: #ffd9d3;
+      border-color: rgba(255, 106, 89, 0.35);
+      background: rgba(255, 106, 89, 0.14);
+    }
+    .pill.system {
+      color: #fff3d7;
+      border-color: rgba(255, 211, 141, 0.35);
+      background: rgba(255, 211, 141, 0.14);
+    }
+    .legend {
+      display: grid;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.35);
+      display: inline-block;
+    }
+    .nav-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--text);
+      background: rgba(255,255,255,0.03);
+      font-size: 12px;
+    }
+    .small-button {
+      width: auto;
+      min-width: 74px;
+      padding: 5px 8px;
+    }
+    .inline-metrics {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .mini-pill {
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .empty { padding: 18px; }
+    .hidden { display: none !important; }
+    @media (max-width: 1220px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 760px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .span-2,
+      .span-3,
+      .span-4,
+      .span-5,
+      .span-6,
+      .span-7,
+      .span-8,
+      .span-12 {
+        grid-column: span 2;
+      }
+      .meta-grid { grid-template-columns: 1fr; }
+      .button-row button,
+      .toggle-row button { min-width: 0; width: 100%; }
+      .tool-row button { min-width: 0; width: 100%; }
+      .validate-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="panel compact-panel">
+      <div class="grid">
+        <div class="field span-12">
+          <details class="collapsible-block">
+            <summary>导入文件夹与来源</summary>
+            <div class="collapsible-content">
+              <div class="grid" style="padding-top:10px;">
+                <div class="field span-4">
+                  <label for="imageFolderUpload">图片文件夹</label>
+                  <input id="imageFolderUpload" type="file" webkitdirectory directory multiple accept=".jpg,.jpeg,.png,.webp,.bmp">
+                </div>
+                <div class="field span-4">
+                  <label for="annotationFolderUpload">标注文件夹</label>
+                  <input id="annotationFolderUpload" type="file" webkitdirectory directory multiple accept=".json,application/json">
+                </div>
+                <div class="field span-2">
+                  <label>导入</label>
+                  <div class="button-row">
+                    <button id="importBtn" type="button">导入文件夹</button>
+                  </div>
+                </div>
+                <div class="field span-2">
+                  <label for="sourceSummary">当前来源</label>
+                  <div id="sourceSummary" class="nav-pill">等待分别选择图片文件夹和标注文件夹。</div>
+                </div>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <div class="field span-2">
+          <label for="searchInput">搜索当前目标列表</label>
+          <input id="searchInput" type="text" placeholder="类别 / 文件名 / annotation id">
+        </div>
+        <div class="field span-2">
+          <label for="categoryFilter">按类别查看</label>
+          <select id="categoryFilter"></select>
+        </div>
+        <div class="field span-4">
+          <label for="targetSelect">目标框</label>
+          <select id="targetSelect"></select>
+        </div>
+        <div class="field span-4">
+          <label>导航</label>
+          <div class="button-row">
+            <button id="prevTargetBtn" type="button">上一个</button>
+            <button id="nextTargetBtn" type="button">下一个</button>
+            <button id="openSessionBtn" type="button">打开会话</button>
+            <span id="targetSummary" class="nav-pill">暂无目标</span>
+          </div>
+        </div>
+
+        <div class="field span-2">
+          <label for="contextPad">视窗上下文</label>
+          <input id="contextPad" type="range" min="0.1" max="1.6" step="0.05" value="0.45">
+        </div>
+        <div class="field span-2">
+          <label for="maskOpacity">当前 Mask 透明度</label>
+          <input id="maskOpacity" type="range" min="0" max="1" step="0.05" value="0.45">
+        </div>
+        <div class="field span-2">
+          <label for="compareOpacity">对比 Mask 透明度</label>
+          <input id="compareOpacity" type="range" min="0" max="1" step="0.05" value="0.35">
+        </div>
+        <div class="field span-2">
+          <label for="variantName">导出 Variant</label>
+          <input id="variantName" type="text" value="manual_clicks" placeholder="manual_clicks">
+        </div>
+        <div class="field span-4">
+          <label for="notesInput">备注</label>
+          <input id="notesInput" type="text" placeholder="可选备注">
+        </div>
+
+        <div class="field span-8">
+          <label>显示图层</label>
+          <div class="button-row">
+            <button id="toggleBBoxBtn" type="button">显示原始 BBox</button>
+            <button id="togglePromptBoxBtn" type="button" class="hidden">显示 Prompt Box</button>
+            <button id="togglePointsBtn" type="button">显示点 / 线</button>
+            <button id="clearCompareBtn" type="button">清除对比</button>
+          </div>
+        </div>
+
+        <div class="field span-4">
+          <label>当前点标签</label>
+          <div class="toggle-row">
+            <button id="fgModeBtn" class="toggle-btn" type="button">前景点 (1)</button>
+            <button id="bgModeBtn" class="toggle-btn" type="button">背景点 (0)</button>
+          </div>
+        </div>
+
+        <div class="field span-7">
+          <label>交互工具</label>
+          <div class="tool-row">
+            <button id="pointToolBtn" class="tool-btn" type="button">点模式</button>
+            <button id="lineToolBtn" class="tool-btn" type="button">线模式</button>
+            <button id="lockRegionToolBtn" class="tool-btn" type="button">闭合锁区</button>
+            <button id="panToolBtn" class="tool-btn" type="button">平移模式</button>
+            <button id="commitRegionBtn" class="tool-btn" type="button">固定锁区</button>
+            <button id="cancelRegionBtn" class="tool-btn" type="button">取消锁区</button>
+          </div>
+          <div class="subtle">闭合锁区: 单击逐点添加顶点。放好 3 个以上顶点后，可回点起点、点击“固定锁区”，或按 Enter 完成；Esc 或“取消锁区”会丢弃当前草稿。</div>
+        </div>
+
+        <div class="field span-5">
+          <label for="textPromptInput">文字 Prompt</label>
+          <textarea
+            id="textPromptInput"
+            class="prompt-input"
+            placeholder="框是必选 prompt。这里可以补充文字描述，例如：black office chair with armrest"
+          ></textarea>
+          <div class="subtle">文字描述会和框、点、线条一起参与这一轮迭代。线条会在后端离散成点。</div>
+        </div>
+
+        <div class="field span-12">
+          <label>操作</label>
+          <div class="button-row">
+            <button id="iterateBtn" type="button">迭代一次</button>
+            <button id="undoBtn" type="button">撤销点</button>
+            <button id="clearPointsBtn" type="button">清空点</button>
+            <button id="clearLinesBtn" type="button">清空线</button>
+            <button id="deleteTargetBtn" type="button">删除当前框</button>
+            <button id="exportLegacyBtn" type="button">导出旧格式</button>
+            <button id="exportSessionBtn" type="button">导出历史数据</button>
+            <button id="exportDeletedBtn" type="button">导出删除记录</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel layout">
+      <div>
+        <div class="viewer-stack">
+          <div id="canvasWrap" class="viewer-wrap">
+            <div id="canvasStage" class="canvas-stage" hidden>
+              <canvas id="viewer" hidden></canvas>
+            </div>
+            <div id="empty" class="empty">
+              先分别选择图片文件夹和标注文件夹，再导入并选择目标框后打开会话。新视图会用整张图做底图，并把当前目标框默认放到画布中心。滚轮缩放；点模式下左键短点击加点；线模式下左键拖出线；平移模式下左键拖动画布。
+            </div>
+          </div>
+          <div id="status" class="status">等待导入图片和标注。</div>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="field span-12">
+          <label>历史轮次</label>
+          <div id="historyList" class="history-list"></div>
+        </div>
+
+        <div class="field span-12">
+          <label>当前工作点</label>
+          <div id="pointList" class="point-list"></div>
+        </div>
+
+        <div class="field span-12">
+          <label>当前线 Prompt</label>
+          <div id="strokeList" class="stroke-list"></div>
+        </div>
+
+        <div class="field span-12">
+          <label>已锁定区域</label>
+          <div id="lockedRegionList" class="stroke-list"></div>
+        </div>
+
+        <div class="field span-12">
+          <label>图层图例</label>
+          <div class="legend">
+            <div class="legend-item"><span class="swatch" style="background: rgba(43,203,255,0.7)"></span> 当前 Mask</div>
+            <div class="legend-item"><span class="swatch" style="background: rgba(240,179,94,0.7)"></span> 对比 Mask</div>
+            <div class="legend-item"><span class="swatch" style="background: rgba(48,208,127,0.9)"></span> 前景点</div>
+            <div class="legend-item"><span class="swatch" style="background: rgba(255,106,89,0.9)"></span> 背景点</div>
+            <div class="legend-item"><span class="swatch" style="background: rgba(48,208,127,0.55)"></span> 前景线</div>
+            <div class="legend-item"><span class="swatch" style="background: rgba(255,106,89,0.55)"></span> 背景线</div>
+            <div class="legend-item"><span class="swatch" style="background: rgba(127,227,190,0.36)"></span> 锁定区域</div>
+            <div class="legend-item"><span class="swatch" style="background: rgba(255,211,141,0.9)"></span> 初始中心点</div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-title">Validate Tools</div>
+      <div class="divider"></div>
+      <div class="grid" style="margin-bottom:10px;">
+        <div class="field span-3">
+          <label for="validateApiKey">SiliconFlow API Key</label>
+          <input id="validateApiKey" type="text" placeholder="可留空，改用服务端环境变量 SILICONFLOW_API_KEY / OPENAI_API_KEY">
+        </div>
+        <div class="field span-3">
+          <label for="validateBaseUrl">Base URL</label>
+          <input id="validateBaseUrl" type="text" value="https://api.siliconflow.cn/v1">
+        </div>
+        <div class="field span-2">
+          <label for="validateModel">Model</label>
+          <input id="validateModel" type="text" value="Qwen/Qwen3-VL-235B-A22B-Instruct">
+        </div>
+        <div class="field span-2">
+          <label for="validateReviewMode">审核方式</label>
+          <select id="validateReviewMode">
+            <option value="original_image_box">原图 + 原框</option>
+            <option value="crop_box2x" selected>2x局部图 + 调整框</option>
+          </select>
+        </div>
+        <div class="field span-2">
+          <label for="validateStrict">严格模式</label>
+          <select id="validateStrict">
+            <option value="false" selected>关闭</option>
+            <option value="true">开启</option>
+          </select>
+        </div>
+        <div class="field span-12">
+          <label>运行</label>
+          <div class="button-row">
+            <button id="validateRunBtn" type="button">审核当前框</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top:10px;">
+        <div class="field span-4">
+          <label>最新结果摘要</label>
+          <div id="validateLatestSummary" class="status">还没有运行 Validate Tools。</div>
+        </div>
+        <div class="field span-8">
+          <label>审核结论</label>
+          <div id="validateReadableResult" class="validate-card">
+            <div class="empty">运行审核后，这里会用可读方式显示“类别是否正确、框位置是否合理、原因说明”。</div>
+          </div>
+        </div>
+        <div class="field span-12">
+          <label>作业历史</label>
+          <div id="validateJobs" class="validate-list"></div>
+        </div>
+      </div>
+
+      <div id="validateSummary" class="status" style="margin-top:10px;">
+        正在读取 Validate_tools 信息...
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const el = {
+      imageFolderUpload: document.getElementById("imageFolderUpload"),
+      annotationFolderUpload: document.getElementById("annotationFolderUpload"),
+      importBtn: document.getElementById("importBtn"),
+      sourceSummary: document.getElementById("sourceSummary"),
+      searchInput: document.getElementById("searchInput"),
+      categoryFilter: document.getElementById("categoryFilter"),
+      targetSelect: document.getElementById("targetSelect"),
+      prevTargetBtn: document.getElementById("prevTargetBtn"),
+      nextTargetBtn: document.getElementById("nextTargetBtn"),
+      openSessionBtn: document.getElementById("openSessionBtn"),
+      targetSummary: document.getElementById("targetSummary"),
+      contextPad: document.getElementById("contextPad"),
+      maskOpacity: document.getElementById("maskOpacity"),
+      compareOpacity: document.getElementById("compareOpacity"),
+      variantName: document.getElementById("variantName"),
+      notesInput: document.getElementById("notesInput"),
+      toggleBBoxBtn: document.getElementById("toggleBBoxBtn"),
+      togglePromptBoxBtn: document.getElementById("togglePromptBoxBtn"),
+      togglePointsBtn: document.getElementById("togglePointsBtn"),
+      clearCompareBtn: document.getElementById("clearCompareBtn"),
+      fgModeBtn: document.getElementById("fgModeBtn"),
+      bgModeBtn: document.getElementById("bgModeBtn"),
+      pointToolBtn: document.getElementById("pointToolBtn"),
+      lineToolBtn: document.getElementById("lineToolBtn"),
+      lockRegionToolBtn: document.getElementById("lockRegionToolBtn"),
+      panToolBtn: document.getElementById("panToolBtn"),
+      commitRegionBtn: document.getElementById("commitRegionBtn"),
+      cancelRegionBtn: document.getElementById("cancelRegionBtn"),
+      textPromptInput: document.getElementById("textPromptInput"),
+      iterateBtn: document.getElementById("iterateBtn"),
+      undoBtn: document.getElementById("undoBtn"),
+      clearPointsBtn: document.getElementById("clearPointsBtn"),
+      clearLinesBtn: document.getElementById("clearLinesBtn"),
+      deleteTargetBtn: document.getElementById("deleteTargetBtn"),
+      exportLegacyBtn: document.getElementById("exportLegacyBtn"),
+      exportSessionBtn: document.getElementById("exportSessionBtn"),
+      exportDeletedBtn: document.getElementById("exportDeletedBtn"),
+      canvasWrap: document.getElementById("canvasWrap"),
+      canvasStage: document.getElementById("canvasStage"),
+      viewer: document.getElementById("viewer"),
+      empty: document.getElementById("empty"),
+      status: document.getElementById("status"),
+      pointList: document.getElementById("pointList"),
+      strokeList: document.getElementById("strokeList"),
+      lockedRegionList: document.getElementById("lockedRegionList"),
+      historyList: document.getElementById("historyList"),
+      validateApiKey: document.getElementById("validateApiKey"),
+      validateBaseUrl: document.getElementById("validateBaseUrl"),
+      validateModel: document.getElementById("validateModel"),
+      validateReviewMode: document.getElementById("validateReviewMode"),
+      validateStrict: document.getElementById("validateStrict"),
+      validateRunBtn: document.getElementById("validateRunBtn"),
+      validateLatestSummary: document.getElementById("validateLatestSummary"),
+      validateReadableResult: document.getElementById("validateReadableResult"),
+      validateJobs: document.getElementById("validateJobs"),
+      validateSummary: document.getElementById("validateSummary"),
+    };
+
+    const COLORS = {
+      currentMask: [43, 203, 255],
+      compareMask: [240, 179, 94],
+      bbox: [64, 223, 133],
+      promptBox: [99, 210, 255],
+      fg: [48, 208, 127],
+      bg: [255, 106, 89],
+      system: [255, 211, 141],
+      strokeFg: [48, 208, 127],
+      strokeBg: [255, 106, 89],
+      lockedRegionFill: [127, 227, 190],
+      lockedRegionStroke: [127, 227, 190],
+    };
+
+    const state = {
+      bootstrap: null,
+      targets: [],
+      filteredTargets: [],
+      targetSourceLabel: "最近导入",
+      validateSession: null,
+      selectedTargetKey: "",
+      session: null,
+      compareHistoryId: null,
+      image: null,
+      imageVersion: 0,
+      maskCache: new Map(),
+      busy: false,
+      currentLabel: 1,
+      currentTool: "point",
+      showBBox: true,
+      showPromptBox: false,
+      showPoints: true,
+      zoomPercent: 100,
+      autoFitPending: false,
+      panX: 0,
+      panY: 0,
+      drag: {
+        active: false,
+        moved: false,
+        startClientX: 0,
+        startClientY: 0,
+        startPanX: 0,
+        startPanY: 0,
+      },
+      drawingStroke: {
+        active: false,
+        points: [],
+      },
+      drawingRegion: {
+        active: false,
+        points: [],
+        hoverPoint: null,
+      },
+    };
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function round2(value) {
+      return Math.round(Number(value) * 100) / 100;
+    }
+
+    function distanceBetweenPoints(a, b) {
+      if (!a || !b) return Infinity;
+      return Math.hypot(Number(a.x) - Number(b.x), Number(a.y) - Number(b.y));
+    }
+
+    function computePolygonArea(points) {
+      if (!Array.isArray(points) || points.length < 3) return 0;
+      let twiceArea = 0;
+      for (let index = 0; index < points.length; index += 1) {
+        const current = points[index];
+        const next = points[(index + 1) % points.length];
+        twiceArea += (Number(current.x) * Number(next.y)) - (Number(next.x) * Number(current.y));
+      }
+      return Math.abs(twiceArea) * 0.5;
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll("\"", "&quot;");
+    }
+
+    function getCurrentTarget() {
+      return state.session ? state.session.target : null;
+    }
+
+    function getCurrentHistory() {
+      if (!state.session) return null;
+      return state.session.history.find((item) => item.history_id === state.session.current_history_id) || null;
+    }
+
+    function getCompareHistory() {
+      if (!state.session || !state.compareHistoryId) return null;
+      return state.session.history.find((item) => item.history_id === state.compareHistoryId) || null;
+    }
+
+    function ensureSessionPromptState(session) {
+      if (!session) return;
+      if (!Array.isArray(session.line_strokes)) {
+        session.line_strokes = [];
+      }
+      if (!Array.isArray(session.locked_regions)) {
+        session.locked_regions = [];
+      }
+      if (typeof session.text_prompt !== "string") {
+        session.text_prompt = "";
+      }
+    }
+
+    function resetDrawingRegion() {
+      state.drawingRegion.active = false;
+      state.drawingRegion.points = [];
+      state.drawingRegion.hoverPoint = null;
+    }
+
+    function getRegionCloseThreshold() {
+      const target = getCurrentTarget();
+      if (!target || !state.session) return 22;
+      const crop = computeCropBox(target);
+      const rect = el.viewer.getBoundingClientRect();
+      const scaleX = crop.width / Math.max(1, rect.width);
+      const scaleY = crop.height / Math.max(1, rect.height);
+      return Math.max(scaleX, scaleY) * 22;
+    }
+
+    function getRegionCloseScreenThreshold() {
+      return 18;
+    }
+
+    function imagePointToClientXY(point) {
+      const target = getCurrentTarget();
+      if (!target || !state.session || !point) return null;
+      const crop = computeCropBox(target);
+      const rect = el.viewer.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      return {
+        x: rect.left + ((Number(point.x) - crop.x0) / Math.max(1, crop.width)) * rect.width,
+        y: rect.top + ((Number(point.y) - crop.y0) / Math.max(1, crop.height)) * rect.height,
+      };
+    }
+
+    function isEventNearRegionStart(event, requireClosable = false) {
+      const points = state.drawingRegion.points || [];
+      if (!state.drawingRegion.active || !points.length) return false;
+      if (requireClosable && points.length < 3) return false;
+      const clientPoint = imagePointToClientXY(points[0]);
+      if (!clientPoint) return false;
+      return Math.hypot(event.clientX - clientPoint.x, event.clientY - clientPoint.y) <= getRegionCloseScreenThreshold();
+    }
+
+    function canCloseDrawingRegionAtPoint(xy) {
+      const points = state.drawingRegion.points || [];
+      if (!state.drawingRegion.active || points.length < 3 || !xy) return false;
+      return distanceBetweenPoints(points[0], xy) <= getRegionCloseThreshold();
+    }
+
+    function normalizeRegionPointsForSave(points) {
+      if (!Array.isArray(points) || points.length < 3) return null;
+      const distinct = [];
+      const duplicateThreshold = 2.5;
+      points.forEach((point) => {
+        if (!point) return;
+        if (distinct.some((existing) => distanceBetweenPoints(existing, point) <= duplicateThreshold)) {
+          return;
+        }
+        distinct.push({
+          x: Number(point.x),
+          y: Number(point.y),
+        });
+      });
+      if (distinct.length < 3) return null;
+      if (computePolygonArea(distinct) < 16) return null;
+      return distinct;
+    }
+
+    function updateRegionToolStatus() {
+      renderButtons();
+      renderLockedRegionList();
+      if (state.busy || state.currentTool !== "region") return;
+      const pointCount = (state.drawingRegion.points || []).length;
+      if (!state.session) {
+        setStatus("先打开一个目标会话，再使用闭合锁区。", true);
+        return;
+      }
+      if (!state.drawingRegion.active || !pointCount) {
+        setStatus("闭合锁区: 单击添加顶点，回点起点或按 Enter 固定，Esc 取消。");
+        return;
+      }
+      const canCommit = Boolean(normalizeRegionPointsForSave(state.drawingRegion.points || []));
+      if (!canCommit) {
+        setStatus(`闭合锁区: 已放置 ${pointCount} 个顶点。还需要 3 个以上不重合的顶点，并保证圈出的面积足够大。`);
+        return;
+      }
+      setStatus(`闭合锁区: 已放置 ${pointCount} 个顶点，回点起点或按 Enter 固定，Esc 取消。`);
+    }
+
+    async function parseJsonSafely(response) {
+      const raw = await response.text();
+      if (!raw) {
+        return {};
+      }
+      try {
+        return JSON.parse(raw);
+      } catch (error) {
+        throw new Error(`Server returned non-JSON response (${response.status}).`);
+      }
+    }
+
+    async function apiGet(path) {
+      let response;
+      try {
+        response = await fetch(path, { cache: "no-store" });
+      } catch (error) {
+        throw new Error(`Network error while requesting ${path}: ${error.message || error}`);
+      }
+      const payload = await parseJsonSafely(response);
+      if (!response.ok) {
+        throw new Error(payload.error || `GET ${path} failed with ${response.status}`);
+      }
+      return payload;
+    }
+
+    async function apiPost(path, payload, options = {}) {
+      const timeoutMs = Number(options.timeoutMs || 120000);
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+      let response;
+      try {
+        response = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload || {}),
+          signal: controller.signal,
+        });
+      } catch (error) {
+        window.clearTimeout(timeoutId);
+        if (error && error.name === "AbortError") {
+          throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s: ${path}`);
+        }
+        throw new Error(`Network error while requesting ${path}: ${error.message || error}`);
+      }
+      window.clearTimeout(timeoutId);
+      const data = await parseJsonSafely(response);
+      if (!response.ok) {
+        throw new Error(data.error || `POST ${path} failed with ${response.status}`);
+      }
+      return data;
+    }
+
+    function setStatus(message, warn = false) {
+      el.status.textContent = message;
+      el.status.classList.toggle("warn", Boolean(warn));
+    }
+
+    function setBusy(message) {
+      state.busy = true;
+      setStatus(message, false);
+      renderButtons();
+    }
+
+    function clearBusy(message) {
+      state.busy = false;
+      setStatus(message, false);
+      renderButtons();
+    }
+
+    function buildTargetLabel(target) {
+      const bbox = (target.bbox_xywh || []).map((value) => round2(value)).join(", ");
+      return `${target.category_name} | ${target.annotation_id} | ${target.image_file_name} | [${bbox}]`;
+    }
+
+    function applyTargets(targets, sourceLabel) {
+      state.targets = Array.isArray(targets) ? targets.slice() : [];
+      state.targetSourceLabel = sourceLabel || "最近导入";
+      if (!state.targets.length) {
+        state.selectedTargetKey = "";
+      } else if (!state.targets.some((item) => item.key === state.selectedTargetKey)) {
+        state.selectedTargetKey = state.targets[0].key;
+      }
+      state.validateSession = null;
+      state.session = null;
+      state.compareHistoryId = null;
+      state.image = null;
+      state.maskCache.clear();
+      state.drawingStroke.active = false;
+      state.drawingStroke.points = [];
+      resetDrawingRegion();
+      el.textPromptInput.value = "";
+      renderCategoryFilter();
+      renderTargetList();
+      renderAll();
+    }
+
+    function renderCategoryFilter() {
+      const counts = new Map();
+      state.targets.forEach((target) => {
+        const key = String(target.category_name || "").trim();
+        if (!key) return;
+        counts.set(key, (counts.get(key) || 0) + 1);
+      });
+      const categories = Array.from(counts.keys()).sort((a, b) => a.localeCompare(b, "zh-CN"));
+      const currentValue = el.categoryFilter.value;
+      el.categoryFilter.innerHTML = "";
+
+      const allOption = document.createElement("option");
+      allOption.value = "";
+      allOption.textContent = `全部类别 (${state.targets.length})`;
+      el.categoryFilter.appendChild(allOption);
+
+      categories.forEach((category) => {
+        const option = document.createElement("option");
+        option.value = category;
+        option.textContent = `${category} (${counts.get(category) || 0})`;
+        el.categoryFilter.appendChild(option);
+      });
+
+      const allowedValues = new Set(["", ...categories]);
+      el.categoryFilter.value = allowedValues.has(currentValue) ? currentValue : "";
+    }
+
+    function renderButtons() {
+      const hasTargets = Boolean(state.filteredTargets.length);
+      const hasSession = Boolean(state.session);
+      const hasWorkingPoints = Boolean(hasSession && state.session.working_points.length);
+      const hasLineStrokes = Boolean(hasSession && state.session.line_strokes && state.session.line_strokes.length);
+      const hasRegionDraft = Boolean(state.drawingRegion.active && state.drawingRegion.points.length);
+      const canCommitRegion = Boolean(hasRegionDraft && normalizeRegionPointsForSave(state.drawingRegion.points || []));
+      const validateAvailable = Boolean(state.bootstrap && state.bootstrap.validate_tools && state.bootstrap.validate_tools.available);
+      el.importBtn.disabled = state.busy;
+      el.openSessionBtn.disabled = !state.selectedTargetKey || state.busy;
+      el.prevTargetBtn.disabled = !hasTargets || state.busy;
+      el.nextTargetBtn.disabled = !hasTargets || state.busy;
+      el.iterateBtn.disabled = !hasSession || state.busy;
+      el.undoBtn.disabled = !hasWorkingPoints || state.busy;
+      el.clearPointsBtn.disabled = !hasWorkingPoints || state.busy;
+      el.clearLinesBtn.disabled = !hasLineStrokes || state.busy;
+      el.exportLegacyBtn.disabled = !hasSession || state.busy;
+      el.exportSessionBtn.disabled = !hasSession || state.busy;
+      el.clearCompareBtn.disabled = !state.compareHistoryId;
+      el.textPromptInput.disabled = !hasSession || state.busy;
+      el.pointToolBtn.disabled = !hasSession || state.busy;
+      el.lineToolBtn.disabled = !hasSession || state.busy;
+      el.lockRegionToolBtn.disabled = !hasSession || state.busy;
+      el.panToolBtn.disabled = !hasSession || state.busy;
+      el.commitRegionBtn.disabled = !hasSession || state.busy || !canCommitRegion;
+      el.cancelRegionBtn.disabled = !hasSession || state.busy || !hasRegionDraft;
+      el.deleteTargetBtn.disabled = !hasSession || state.busy;
+      el.exportDeletedBtn.disabled = !state.bootstrap || state.busy;
+      el.validateRunBtn.disabled = !hasSession || state.busy || !validateAvailable;
+    }
+
+    function toggleModeButtons() {
+      el.fgModeBtn.classList.toggle("active-fg", state.currentLabel === 1);
+      el.bgModeBtn.classList.toggle("active-bg", state.currentLabel === 0);
+    }
+
+    function toggleToolButtons() {
+      el.pointToolBtn.classList.toggle("active-tool", state.currentTool === "point");
+      el.lineToolBtn.classList.toggle("active-tool", state.currentTool === "line");
+      el.lockRegionToolBtn.classList.toggle("active-tool", state.currentTool === "region");
+      el.panToolBtn.classList.toggle("active-tool", state.currentTool === "pan");
+    }
+
+    function renderTargetList() {
+      const keyword = el.searchInput.value.trim().toLowerCase();
+      const selectedCategory = el.categoryFilter.value;
+      state.filteredTargets = state.targets.filter((target) => {
+        if (selectedCategory && target.category_name !== selectedCategory) {
+          return false;
+        }
+        if (!keyword) return true;
+        const haystack = [
+          target.category_name,
+          target.image_file_name,
+          target.annotation_id,
+          target.annotation_file_name,
+        ].join(" ").toLowerCase();
+        return haystack.includes(keyword);
+      });
+
+      el.targetSelect.innerHTML = "";
+      if (!state.filteredTargets.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "没有可用目标";
+        el.targetSelect.appendChild(option);
+        state.selectedTargetKey = "";
+        el.targetSummary.textContent = "暂无目标";
+        renderButtons();
+        return;
+      }
+
+      const keys = new Set(state.filteredTargets.map((item) => item.key));
+      if (!keys.has(state.selectedTargetKey)) {
+        state.selectedTargetKey = state.filteredTargets[0].key;
+      }
+
+      state.filteredTargets.forEach((target) => {
+        const option = document.createElement("option");
+        option.value = target.key;
+        option.textContent = buildTargetLabel(target);
+        el.targetSelect.appendChild(option);
+      });
+      el.targetSelect.value = state.selectedTargetKey;
+      const index = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
+      el.targetSummary.textContent = `目标 ${index + 1} / ${state.filteredTargets.length}`;
+      renderButtons();
+    }
+
+    function renderSourceSummary() {
+      const count = state.targets.length;
+      el.sourceSummary.textContent = count
+        ? `${state.targetSourceLabel}，共 ${count} 个目标框`
+        : "等待分别选择图片文件夹和标注文件夹。";
+    }
+
+    function describeValidateReviewMode(mode) {
+      if (mode === "original_image_box") {
+        return "原图+原框";
+      }
+      if (mode === "crop_box2x") {
+        return "2x局部图+调整框";
+      }
+      return mode || "-";
+    }
+
+    function renderValidateSection() {
+      const payload = state.bootstrap && state.bootstrap.validate_tools;
+      if (!payload) {
+        el.validateSummary.textContent = "当前服务没有提供 Validate_tools 信息。";
+        return;
+      }
+
+      const baseDir = payload.base_dir || "未配置";
+      const availableText = payload.available ? "已接入" : "未找到";
+      el.validateSummary.textContent = `${availableText} | 目录: ${baseDir} | rules: ${payload.rules_count || 0}`;
+      el.validateSummary.classList.toggle("warn", !payload.available);
+      el.validateSummary.textContent += " | 当前仅审核当前展示框";
+
+      const validateSession = state.validateSession || {};
+      const jobs = (validateSession.jobs || []).filter((job) => job.kind !== "visualize");
+      const sessionLatestJob = validateSession.latest_job && validateSession.latest_job.kind !== "visualize"
+        ? validateSession.latest_job
+        : null;
+      const latestJob = sessionLatestJob || jobs[0] || null;
+
+      if (!latestJob) {
+        el.validateLatestSummary.textContent = state.session
+          ? "当前会话还没有运行过 Validate Tools。"
+          : "打开会话后可运行 Validate Tools。";
+        el.validateReadableResult.innerHTML = `<div class="empty">运行审核后，这里会显示可读结论。</div>`;
+      } else {
+        const summary = latestJob.summary || {};
+        const statusText = latestJob.status === "error"
+          ? "审核失败"
+          : ((summary.incorrect_count || 0) > 0 ? "发现需要复核的问题" : "当前框审核通过");
+        el.validateLatestSummary.textContent = [
+          statusText,
+          `模式：${describeValidateReviewMode(summary.review_mode || latestJob.review_mode || "-")}`,
+          `类别：${summary.target_category || latestJob.target_category || "-"}`,
+          summary.score != null ? `评分：${summary.score}` : "",
+        ].filter(Boolean).join(" | ");
+        el.validateLatestSummary.classList.toggle("warn", latestJob.status === "error");
+
+        const resultUrl = latestJob.artifact_urls && latestJob.artifact_urls.result_json;
+        if (resultUrl) {
+          el.validateReadableResult.innerHTML = `<div class="empty">正在读取审核结果...</div>`;
+          fetch(resultUrl, { cache: "no-store" })
+            .then((response) => response.json())
+            .then((data) => {
+              el.validateReadableResult.innerHTML = buildValidateReadableHtml(data, latestJob);
+            })
+            .catch(() => {
+              el.validateReadableResult.innerHTML = `
+                <div class="empty">读取审核结果失败，但这次作业已经完成。你可以直接看下方历史记录中的摘要。</div>
+              `;
+            });
+        } else {
+          el.validateReadableResult.innerHTML = `
+            <div class="empty">这次作业没有返回结果文件。</div>
+          `;
+        }
+      }
+
+      el.validateJobs.innerHTML = jobs.length ? jobs.map((job) => {
+        const summary = job.summary || {};
+        const statusText = job.status === "error"
+          ? "审核失败"
+          : ((summary.incorrect_count || 0) > 0 ? "建议复核" : "审核通过");
+        return `
+          <div class="validate-card">
+            <div class="validate-row">
+              <div>
+                <strong>${escapeHtml(statusText)}</strong>
+                <div class="validate-meta">
+                  <span class="pill">${escapeHtml(job.created_at || "")}</span>
+                  <span class="pill">${escapeHtml(describeValidateReviewMode(summary.review_mode || job.review_mode || "-"))}</span>
+                  <span class="pill">目标类 ${escapeHtml(summary.target_category || job.target_category || "-")}</span>
+                  <span class="pill">评分 ${summary.score != null ? summary.score : "-"}</span>
+                </div>
+                <div class="subtle" style="margin-top:8px;line-height:1.6;">
+                  <div>类别问题：${summary.incorrect_count != null ? escapeHtml(String(summary.incorrect_count)) : "-"}</div>
+                  <div>说明：${escapeHtml(summary.comments || "暂无说明")}</div>
+                </div>
+              </div>
+              <div class="button-row">
+                <button type="button" class="small-button" data-validate-view="${escapeHtml(job.job_id || "")}">查看结果</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("") : `<div class="empty">还没有 Validate Tools 作业记录。</div>`;
+
+      el.validateJobs.querySelectorAll("[data-validate-view]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const jobId = button.dataset.validateView;
+          const selected = jobs.find((item) => item.job_id === jobId);
+          if (!selected) return;
+          state.validateSession = {
+            ...validateSession,
+            latest_job: selected,
+            jobs,
+          };
+          renderValidateSection();
+        });
+      });
+    }
+
+    function decodeSimpleRLE(rle, cacheKey) {
+      if (!rle) return null;
+      if (state.maskCache.has(cacheKey)) {
+        return state.maskCache.get(cacheKey);
+      }
+      const [height, width] = rle.size;
+      const counts = rle.counts || [];
+      const flat = new Uint8Array(height * width);
+      let cursor = 0;
+      let value = 0;
+      for (const rawCount of counts) {
+        const count = Number(rawCount);
+        if (count > 0) {
+          flat.fill(value, cursor, cursor + count);
+          cursor += count;
+        }
+        value = value ? 0 : 1;
+      }
+      const decoded = { width, height, pixels: flat };
+      state.maskCache.set(cacheKey, decoded);
+      return decoded;
+    }
+
+    function buildMaskOverlayCanvas(mask, crop, color, alpha) {
+      const overlayCanvas = document.createElement("canvas");
+      overlayCanvas.width = crop.width;
+      overlayCanvas.height = crop.height;
+      const overlayCtx = overlayCanvas.getContext("2d");
+      const imageData = overlayCtx.createImageData(crop.width, crop.height);
+      const data = imageData.data;
+      for (let y = 0; y < crop.height; y += 1) {
+        const sourceRow = crop.y0 + y;
+        for (let x = 0; x < crop.width; x += 1) {
+          const sourceCol = crop.x0 + x;
+          const flatIndex = sourceRow + sourceCol * mask.height;
+          if (!mask.pixels[flatIndex]) {
+            continue;
+          }
+          const rgbaIndex = (y * crop.width + x) * 4;
+          data[rgbaIndex] = color[0];
+          data[rgbaIndex + 1] = color[1];
+          data[rgbaIndex + 2] = color[2];
+          data[rgbaIndex + 3] = Math.round(alpha * 255);
+        }
+      }
+      overlayCtx.putImageData(imageData, 0, 0);
+      return overlayCanvas;
+    }
+
+    function computeCropBox(target) {
+      return {
+        x0: 0,
+        y0: 0,
+        x1: target.image_width,
+        y1: target.image_height,
+        width: Math.max(1, Number(target.image_width) || 1),
+        height: Math.max(1, Number(target.image_height) || 1),
+      };
+    }
+
+    function computeFocusWindow(target) {
+      const imageWidth = Math.max(1, Number(target.image_width) || 1);
+      const imageHeight = Math.max(1, Number(target.image_height) || 1);
+      const [bboxX, bboxY, bboxWidthRaw, bboxHeightRaw] = (target.bbox_xywh || []).map(Number);
+      const bboxWidth = Math.max(1, bboxWidthRaw || 1);
+      const bboxHeight = Math.max(1, bboxHeightRaw || 1);
+      const centerX = bboxX + bboxWidth / 2;
+      const centerY = bboxY + bboxHeight / 2;
+      const wrapWidth = Math.max(320, el.canvasWrap.clientWidth - 16);
+      const wrapHeight = Math.max(320, el.canvasWrap.clientHeight - 16);
+      const aspect = wrapWidth / Math.max(1, wrapHeight);
+      const contextPad = Number(el.contextPad.value || 0.45);
+      const scaleFactor = 2.2 + contextPad * 3.8;
+      let focusWidth = Math.max(bboxWidth * scaleFactor, imageWidth * 0.16);
+      let focusHeight = Math.max(bboxHeight * scaleFactor, imageHeight * 0.16);
+
+      if (focusWidth / Math.max(1, focusHeight) > aspect) {
+        focusHeight = focusWidth / Math.max(0.01, aspect);
+      } else {
+        focusWidth = focusHeight * aspect;
+      }
+
+      focusWidth = Math.min(imageWidth, focusWidth);
+      focusHeight = Math.min(imageHeight, focusHeight);
+
+      if (focusWidth / Math.max(1, focusHeight) > aspect) {
+        focusHeight = Math.min(imageHeight, focusWidth / Math.max(0.01, aspect));
+      } else {
+        focusWidth = Math.min(imageWidth, focusHeight * aspect);
+      }
+
+      return {
+        centerX,
+        centerY,
+        width: Math.max(1, focusWidth),
+        height: Math.max(1, focusHeight),
+      };
+    }
+
+    function applyCanvasZoom(canvasRecord) {
+      const zoom = state.zoomPercent / 100;
+      const displayWidth = Math.max(1, Math.round(canvasRecord.width * zoom));
+      const displayHeight = Math.max(1, Math.round(canvasRecord.height * zoom));
+      el.viewer.style.width = `${displayWidth}px`;
+      el.viewer.style.height = `${displayHeight}px`;
+      el.viewer.style.left = `${Math.round(state.panX)}px`;
+      el.viewer.style.top = `${Math.round(state.panY)}px`;
+      el.canvasStage.style.width = `${Math.max(1, el.canvasWrap.clientWidth)}px`;
+      el.canvasStage.style.height = `${Math.max(1, el.canvasWrap.clientHeight)}px`;
+    }
+
+    function computeFitZoomPercent(canvasRecord, target = null) {
+      const availableWidth = Math.max(240, el.canvasWrap.clientWidth - 16);
+      const availableHeight = Math.max(240, el.canvasWrap.clientHeight - 16);
+      const focusWindow = target ? computeFocusWindow(target) : canvasRecord;
+      const scale = Math.min(
+        availableWidth / Math.max(1, focusWindow.width),
+        availableHeight / Math.max(1, focusWindow.height)
+      );
+      return clamp(Math.round(scale * 100), 25, 800);
+    }
+
+    function centerCanvasInViewport(canvasRecord, target = null) {
+      const zoom = state.zoomPercent / 100;
+      if (!target) {
+        const displayWidth = Math.max(1, Math.round(canvasRecord.width * zoom));
+        const displayHeight = Math.max(1, Math.round(canvasRecord.height * zoom));
+        state.panX = Math.round((el.canvasWrap.clientWidth - displayWidth) / 2);
+        state.panY = Math.round((el.canvasWrap.clientHeight - displayHeight) / 2);
+        return;
+      }
+      const focusWindow = computeFocusWindow(target);
+      state.panX = Math.round(el.canvasWrap.clientWidth / 2 - focusWindow.centerX * zoom);
+      state.panY = Math.round(el.canvasWrap.clientHeight / 2 - focusWindow.centerY * zoom);
+    }
+
+    function applyCanvasZoomAroundPoint(canvasRecord, nextZoomPercent, clientX, clientY) {
+      const currentZoom = state.zoomPercent / 100;
+      if (!Number.isFinite(currentZoom) || currentZoom <= 0) return;
+      const stageRect = el.canvasStage.getBoundingClientRect();
+      const viewerRect = el.viewer.getBoundingClientRect();
+      const pointerX = clientX - stageRect.left;
+      const pointerY = clientY - stageRect.top;
+      const imageX = clamp((clientX - viewerRect.left) / currentZoom, 0, canvasRecord.width);
+      const imageY = clamp((clientY - viewerRect.top) / currentZoom, 0, canvasRecord.height);
+
+      state.zoomPercent = nextZoomPercent;
+      const nextZoom = nextZoomPercent / 100;
+      state.panX = pointerX - imageX * nextZoom;
+      state.panY = pointerY - imageY * nextZoom;
+      applyCanvasZoom(canvasRecord);
+      renderMeta();
+    }
+
+    function handleCanvasWheel(event) {
+      if (!state.session || !state.image) return;
+      event.preventDefault();
+      const crop = computeCropBox(getCurrentTarget());
+      const currentZoom = state.zoomPercent;
+      const nextZoom = event.deltaY < 0
+        ? Math.min(800, currentZoom + 10)
+        : Math.max(25, currentZoom - 10);
+      if (nextZoom === currentZoom) return;
+      applyCanvasZoomAroundPoint(crop, nextZoom, event.clientX, event.clientY);
+    }
+
+    function renderMeta() {
+      if (!el.metaGrid) return;
+      const target = getCurrentTarget();
+      if (!target) {
+        el.metaGrid.innerHTML = `<div class="empty">打开会话后会在这里显示目标信息。</div>`;
+        return;
+      }
+      const current = getCurrentHistory();
+      const compare = getCompareHistory();
+      const cards = [
+        ["类别", target.category_name],
+        ["图片", target.image_file_name],
+        ["Annotation", target.annotation_id],
+        ["BBox XYWH", target.bbox_xywh.map((value) => round2(value)).join(", ")],
+        ["Prompt Box", state.session.prompt_box_xyxy.map((value) => round2(value)).join(", ")],
+        ["当前轮次", current ? current.name : "-"],
+        ["当前面积", current ? String(current.mask_area) : "-"],
+        ["工作点数", String(state.session.working_points.length)],
+        ["线条数", String((state.session.line_strokes || []).length)],
+        ["锁区数", String((state.session.locked_regions || []).length)],
+        ["文字 Prompt", state.session.text_prompt ? `${state.session.text_prompt.slice(0, 36)}${state.session.text_prompt.length > 36 ? "..." : ""}` : "无"],
+        ["历史轮次数", String(state.session.history.length)],
+        ["缩放", `${state.zoomPercent}%`],
+        ["当前分数", current && current.score != null ? current.score.toFixed(4) : "-"],
+        ["对比轮次", compare ? compare.name : "无"],
+        ["删除状态", state.session.is_deleted ? `deleted @ ${state.session.deleted_at || "-"}` : "active"],
+      ];
+      el.metaGrid.innerHTML = cards.map(([k, v]) => `
+        <div class="meta-card">
+          <div class="k">${k}</div>
+          <div class="v">${escapeHtml(v)}</div>
+        </div>
+      `).join("");
+    }
+
+    function renderPointList() {
+      if (!state.session) {
+        el.pointList.innerHTML = `<div class="empty">暂无打开的会话。</div>`;
+        return;
+      }
+      const systemPoints = state.session.system_prompt_points || [];
+      const workingPoints = state.session.working_points || [];
+      if (!systemPoints.length && !workingPoints.length) {
+        el.pointList.innerHTML = `<div class="empty">还没有点。</div>`;
+        return;
+      }
+
+      const rows = [];
+      systemPoints.forEach((point, index) => {
+        rows.push(`
+          <div class="point-card">
+            <div class="point-row">
+              <div><strong>S${index + 1}</strong> <span class="pill system">system</span></div>
+              <div>(${round2(point.x)}, ${round2(point.y)})</div>
+            </div>
+          </div>
+        `);
+      });
+      workingPoints.forEach((point, index) => {
+        const pillClass = point.label === 1 ? "fg" : "bg";
+        const pillText = point.label === 1 ? "foreground" : "background";
+        rows.push(`
+          <div class="point-card">
+            <div class="point-row">
+              <div><strong>#${index + 1}</strong> <span class="pill ${pillClass}">${pillText}</span></div>
+              <div class="button-row">
+                <span>(${round2(point.x)}, ${round2(point.y)})</span>
+                <button class="small-button" data-point-delete="${point.point_id}" type="button">删除</button>
+              </div>
+            </div>
+          </div>
+        `);
+      });
+      el.pointList.innerHTML = rows.join("");
+      el.pointList.querySelectorAll("[data-point-delete]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          try {
+            setBusy("Deleting point...");
+            const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/points/delete`, {
+              point_id: button.dataset.pointDelete,
+            });
+            applySessionPayload(payload);
+            clearBusy("Point deleted.");
+          } catch (error) {
+            state.busy = false;
+            renderButtons();
+            setStatus(error.message || String(error), true);
+          }
+        });
+      });
+    }
+
+    async function syncPromptState() {
+      if (!state.session) return;
+      const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/prompt-state`, {
+        text_prompt: el.textPromptInput.value,
+        line_strokes: state.session.line_strokes || [],
+      });
+      applySessionPayload(payload);
+    }
+
+    function buildValidateRequestPayload() {
+      return {
+        api_key: el.validateApiKey.value.trim(),
+        base_url: el.validateBaseUrl.value.trim(),
+        model: el.validateModel.value.trim(),
+        review_mode: el.validateReviewMode.value,
+        strict_mode: el.validateStrict.value === "true",
+      };
+    }
+
+    function getValidateReviewEntry(result) {
+      if (!result || typeof result !== "object") return null;
+      if (result.review && typeof result.review === "object") return result.review;
+      if (Array.isArray(result.incorrect_annotations) && result.incorrect_annotations.length) {
+        return result.incorrect_annotations[0];
+      }
+      if (Array.isArray(result.correct_annotations) && result.correct_annotations.length) {
+        return result.correct_annotations[0];
+      }
+      return null;
+    }
+
+    function formatValidateBoolean(value, positiveText, negativeText, unknownText = "未提供") {
+      if (value === true) return positiveText;
+      if (value === false) return negativeText;
+      return unknownText;
+    }
+
+    function buildValidateReadableHtml(result, latestJob) {
+      const summary = (latestJob && latestJob.summary) || {};
+      const entry = getValidateReviewEntry(result);
+      const labelCorrect = entry && typeof entry.label_correct === "boolean"
+        ? entry.label_correct
+        : (entry && typeof entry.is_correct === "boolean" && summary.incorrect_count === 0 ? true : null);
+      const bboxReasonable = entry && typeof entry.bbox_reasonable === "boolean"
+        ? entry.bbox_reasonable
+        : null;
+      const suggestedLabel = entry && entry.suggested_label ? String(entry.suggested_label) : "";
+      const reason = (entry && (entry.reason || entry.issues))
+        || summary.comments
+        || latestJob.error_message
+        || "暂无说明。";
+      const score = result && result.score != null ? result.score : summary.score;
+      const targetLabel = (entry && entry.label) || summary.target_category || latestJob.target_category || "-";
+      const needsReview = labelCorrect === false || bboxReasonable === false || latestJob.status === "error";
+      const conclusion = latestJob.status === "error"
+        ? "审核失败"
+        : (needsReview ? "建议复核" : "审核通过");
+      const conclusionClass = latestJob.status === "error" || needsReview ? "warn" : "";
+      return `
+        <div class="validate-row" style="align-items:flex-start;">
+          <div>
+            <strong>${escapeHtml(conclusion)}</strong>
+            <div class="validate-meta" style="margin-top:8px;">
+              <span class="pill ${conclusionClass}">${escapeHtml(describeValidateReviewMode(summary.review_mode || latestJob.review_mode || "-"))}</span>
+              <span class="pill">目标类 ${escapeHtml(String(targetLabel))}</span>
+              <span class="pill">评分 ${score != null ? escapeHtml(String(score)) : "-"}</span>
+            </div>
+          </div>
+        </div>
+        <div class="subtle" style="margin-top:10px;line-height:1.7;">
+          <div>类别判断：${escapeHtml(formatValidateBoolean(labelCorrect, "正确", "可能错误"))}</div>
+          <div>框位置判断：${escapeHtml(formatValidateBoolean(bboxReasonable, "合理", "可能不合理"))}</div>
+          <div>建议类别：${escapeHtml(suggestedLabel || "无")}</div>
+          <div>说明：${escapeHtml(String(reason))}</div>
+        </div>
+      `;
+    }
+
+    async function runValidateTools(kind) {
+      if (!state.session) return;
+      const route = {
+        validate: "validate",
+      }[kind];
+      if (!route) return;
+      const timeoutMs = 600000;
+      const payload = buildValidateRequestPayload();
+      try {
+        setBusy(`Running Validate Tools: ${kind}... this can take several minutes.`);
+        const response = await apiPost(
+          `/api/sessions/${encodeURIComponent(state.session.session_id)}/validate-tools/${route}`,
+          payload,
+          { timeoutMs },
+        );
+        applySessionPayload(response);
+        clearBusy(`Validate Tools ${kind} finished.`);
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    function renderStrokeList() {
+      if (!state.session) {
+        el.strokeList.innerHTML = `<div class="empty">暂无打开的会话。</div>`;
+        return;
+      }
+      const strokes = state.session.line_strokes || [];
+      if (!strokes.length) {
+        el.strokeList.innerHTML = `<div class="empty">还没有线 prompt。</div>`;
+        return;
+      }
+      el.strokeList.innerHTML = strokes.map((stroke, index) => {
+        const pillClass = Number(stroke.label) === 1 ? "fg" : "bg";
+        const pillText = Number(stroke.label) === 1 ? "foreground" : "background";
+        return `
+          <div class="stroke-card">
+            <div class="stroke-row">
+              <div>
+                <strong>L${index + 1}</strong>
+                <span class="pill ${pillClass}">${pillText}</span>
+              </div>
+              <div class="button-row">
+                <span class="subtle">${(stroke.points || []).length} pts</span>
+                <button class="small-button" data-stroke-delete="${stroke.stroke_id}" type="button">删除</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      el.strokeList.querySelectorAll("[data-stroke-delete]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          if (!state.session) return;
+          state.session.line_strokes = (state.session.line_strokes || []).filter(
+            (stroke) => stroke.stroke_id !== button.dataset.strokeDelete
+          );
+          renderAll();
+          try {
+            setBusy("Deleting stroke...");
+            await syncPromptState();
+            clearBusy("Stroke deleted.");
+          } catch (error) {
+            state.busy = false;
+            renderButtons();
+            setStatus(error.message || String(error), true);
+          }
+        });
+      });
+    }
+
+    function renderLockedRegionList() {
+      if (!state.session) {
+        el.lockedRegionList.innerHTML = `<div class="empty">暂无打开的会话。</div>`;
+        return;
+      }
+      const regions = state.session.locked_regions || [];
+      const draftPoints = state.drawingRegion.points || [];
+      const draftArea = computePolygonArea(draftPoints);
+      const draftReady = Boolean(normalizeRegionPointsForSave(draftPoints));
+      const cards = [];
+
+      if (state.drawingRegion.active && draftPoints.length) {
+        cards.push(`
+          <div class="stroke-card">
+            <div class="stroke-row">
+              <div>
+                <strong>Draft</strong>
+                <span class="pill ${draftReady ? "fg" : ""}">${draftReady ? "ready" : "editing"}</span>
+              </div>
+              <div class="button-row">
+                <span class="subtle">${draftPoints.length} pts | area ${Math.round(draftArea)}</span>
+                <button class="small-button" data-region-commit="draft" type="button" ${draftReady ? "" : "disabled"}>固定</button>
+                <button class="small-button" data-region-cancel="draft" type="button">取消</button>
+              </div>
+            </div>
+          </div>
+        `);
+      }
+
+      if (!regions.length && !cards.length) {
+        el.lockedRegionList.innerHTML = `<div class="empty">还没有锁定区域。用“闭合锁区”工具圈住要永久保留的 mask 部分。</div>`;
+        return;
+      }
+
+      cards.push(...regions.map((region, index) => `
+        <div class="stroke-card">
+          <div class="stroke-row">
+            <div>
+              <strong>R${index + 1}</strong>
+              <span class="pill fg">locked</span>
+            </div>
+            <div class="subtle">${(region.points || []).length} pts</div>
+          </div>
+        </div>
+      `));
+      el.lockedRegionList.innerHTML = cards.join("");
+
+      el.lockedRegionList.querySelectorAll("[data-region-commit]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (state.busy) return;
+          void completeDrawingRegion();
+        });
+      });
+      el.lockedRegionList.querySelectorAll("[data-region-cancel]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (state.busy) return;
+          resetDrawingRegion();
+          updateRegionToolStatus();
+          renderCanvas();
+        });
+      });
+    }
+
+    function renderHistoryList() {
+      if (!state.session) {
+        el.historyList.innerHTML = `<div class="empty">暂无历史。</div>`;
+        return;
+      }
+      el.historyList.innerHTML = state.session.history.map((item) => {
+        const classes = ["history-card"];
+        if (item.history_id === state.session.current_history_id) {
+          classes.push("current");
+        }
+        if (item.history_id === state.compareHistoryId) {
+          classes.push("compare");
+        }
+        const pointCount = (item.manual_points_snapshot || []).length;
+        const strokeCount = (item.line_strokes_snapshot || []).length;
+        const regionCount = (item.locked_regions_snapshot || []).length;
+        return `
+          <div class="${classes.join(" ")}">
+            <div class="history-row">
+              <div>
+                <strong>${escapeHtml(item.name)}</strong>
+                <div class="inline-metrics">
+                  <span class="mini-pill">${escapeHtml(item.kind)}</span>
+                  <span class="mini-pill">points ${pointCount}</span>
+                  <span class="mini-pill">lines ${strokeCount}</span>
+                  <span class="mini-pill">locks ${regionCount}</span>
+                  <span class="mini-pill">${item.text_prompt ? "text on" : "text off"}</span>
+                  <span class="mini-pill">area ${item.mask_area}</span>
+                  <span class="mini-pill">${item.score != null ? item.score.toFixed(4) : "-"}</span>
+                </div>
+              </div>
+              <div class="button-row">
+                <button class="small-button" data-history-compare="${item.history_id}" type="button">对比</button>
+                <button class="small-button" data-history-rollback="${item.history_id}" type="button">回退到此</button>
+              </div>
+            </div>
+            <div style="margin-top:8px; color: var(--muted); font-size: 12px;">
+              parent: ${escapeHtml(item.parent_history_id || "none")} | created: ${escapeHtml(item.created_at)}
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      el.historyList.querySelectorAll("[data-history-compare]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const historyId = button.dataset.historyCompare;
+          state.compareHistoryId = state.compareHistoryId === historyId ? null : historyId;
+          renderAll();
+        });
+      });
+      el.historyList.querySelectorAll("[data-history-rollback]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          try {
+            setBusy("Rolling back to selected iteration...");
+            const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/rollback`, {
+              history_id: button.dataset.historyRollback,
+            });
+            applySessionPayload(payload);
+            clearBusy("Rolled back to selected iteration.");
+          } catch (error) {
+            state.busy = false;
+            renderButtons();
+            setStatus(error.message || String(error), true);
+          }
+        });
+      });
+    }
+
+    function renderPreview() {
+      if (!el.preview) return;
+      if (!state.session) {
+        el.preview.value = "";
+        return;
+      }
+      const current = getCurrentHistory();
+      const preview = {
+        session_id: state.session.session_id,
+        target: {
+          annotation_id: state.session.target.annotation_id,
+          category_name: state.session.target.category_name,
+          image_file_name: state.session.target.image_file_name,
+          bbox_xywh: state.session.target.bbox_xywh,
+        },
+        prompt_box_xyxy: state.session.prompt_box_xyxy,
+        current_history: current ? {
+          history_id: current.history_id,
+          name: current.name,
+          parent_history_id: current.parent_history_id,
+          score: current.score,
+          mask_area: current.mask_area,
+        } : null,
+        working_points: state.session.working_points.map((point) => ({
+          x: point.x,
+          y: point.y,
+          label: point.label,
+        })),
+        line_strokes: (state.session.line_strokes || []).map((stroke) => ({
+          stroke_id: stroke.stroke_id,
+          label: stroke.label,
+          point_count: (stroke.points || []).length,
+        })),
+        locked_regions: (state.session.locked_regions || []).map((region) => ({
+          region_id: region.region_id,
+          point_count: (region.points || []).length,
+        })),
+        text_prompt: state.session.text_prompt || "",
+        is_deleted: Boolean(state.session.is_deleted),
+      };
+      el.preview.value = JSON.stringify(preview, null, 2);
+    }
+
+    function drawPoints(ctx, points, crop, fixedColor, radius) {
+      points.forEach((point) => {
+        const x = Number(point.x) - crop.x0;
+        const y = Number(point.y) - crop.y0;
+        if (x < -20 || y < -20 || x > crop.width + 20 || y > crop.height + 20) {
+          return;
+        }
+        const color = fixedColor || (Number(point.label) === 1 ? COLORS.fg : COLORS.bg);
+        ctx.fillStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.96)`;
+        ctx.strokeStyle = "rgba(10, 14, 18, 0.95)";
+        ctx.lineWidth = 0.75;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      });
+    }
+
+    function drawLineStrokes(ctx, strokes, crop) {
+      (strokes || []).forEach((stroke) => {
+        const points = stroke.points || [];
+        if (!points.length) return;
+        const color = Number(stroke.label) === 1 ? COLORS.strokeFg : COLORS.strokeBg;
+        ctx.strokeStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.78)`;
+        ctx.lineWidth = 4;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        points.forEach((point, index) => {
+          const x = Number(point.x) - crop.x0;
+          const y = Number(point.y) - crop.y0;
+          if (index === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.stroke();
+      });
+
+      if (state.drawingStroke.active && state.drawingStroke.points.length) {
+        const color = state.currentLabel === 1 ? COLORS.strokeFg : COLORS.strokeBg;
+        ctx.strokeStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.92)`;
+        ctx.lineWidth = 3;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        state.drawingStroke.points.forEach((point, index) => {
+          const x = Number(point.x) - crop.x0;
+          const y = Number(point.y) - crop.y0;
+          if (index === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.stroke();
+      }
+    }
+
+    function drawLockedRegions(ctx, regions, crop) {
+      (regions || []).forEach((region) => {
+        const points = region.points || [];
+        if (points.length < 3) return;
+        ctx.beginPath();
+        points.forEach((point, index) => {
+          const x = Number(point.x) - crop.x0;
+          const y = Number(point.y) - crop.y0;
+          if (index === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.closePath();
+        ctx.fillStyle = `rgba(${COLORS.lockedRegionFill[0]}, ${COLORS.lockedRegionFill[1]}, ${COLORS.lockedRegionFill[2]}, 0.18)`;
+        ctx.strokeStyle = `rgba(${COLORS.lockedRegionStroke[0]}, ${COLORS.lockedRegionStroke[1]}, ${COLORS.lockedRegionStroke[2]}, 0.92)`;
+        ctx.lineWidth = 2;
+        ctx.fill();
+        ctx.stroke();
+      });
+
+      if (state.drawingRegion.active && state.drawingRegion.points.length) {
+        const points = state.drawingRegion.points;
+        const hoverPoint = state.drawingRegion.hoverPoint;
+        const canClose = canCloseDrawingRegionAtPoint(hoverPoint);
+        const previewClosePoint = hoverPoint || points[points.length - 1];
+        const startPoint = points[0];
+
+        if (points.length >= 3) {
+          ctx.beginPath();
+          points.forEach((point, index) => {
+            const x = Number(point.x) - crop.x0;
+            const y = Number(point.y) - crop.y0;
+            if (index === 0) {
+              ctx.moveTo(x, y);
+            } else {
+              ctx.lineTo(x, y);
+            }
+          });
+          ctx.closePath();
+          ctx.fillStyle = `rgba(${COLORS.lockedRegionFill[0]}, ${COLORS.lockedRegionFill[1]}, ${COLORS.lockedRegionFill[2]}, 0.12)`;
+          ctx.fill();
+        }
+
+        ctx.beginPath();
+        points.forEach((point, index) => {
+          const x = Number(point.x) - crop.x0;
+          const y = Number(point.y) - crop.y0;
+          if (index === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.strokeStyle = `rgba(${COLORS.lockedRegionStroke[0]}, ${COLORS.lockedRegionStroke[1]}, ${COLORS.lockedRegionStroke[2]}, 0.96)`;
+        ctx.lineWidth = 2.5;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.stroke();
+
+        if (hoverPoint) {
+          ctx.beginPath();
+          const lastPoint = points[points.length - 1];
+          ctx.moveTo(Number(lastPoint.x) - crop.x0, Number(lastPoint.y) - crop.y0);
+          ctx.lineTo(Number(hoverPoint.x) - crop.x0, Number(hoverPoint.y) - crop.y0);
+          ctx.strokeStyle = `rgba(${COLORS.lockedRegionStroke[0]}, ${COLORS.lockedRegionStroke[1]}, ${COLORS.lockedRegionStroke[2]}, 0.72)`;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([8, 6]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        if (points.length >= 2 && previewClosePoint && startPoint) {
+          ctx.beginPath();
+          ctx.moveTo(Number(previewClosePoint.x) - crop.x0, Number(previewClosePoint.y) - crop.y0);
+          ctx.lineTo(Number(startPoint.x) - crop.x0, Number(startPoint.y) - crop.y0);
+          ctx.strokeStyle = canClose
+            ? "rgba(255, 211, 141, 0.96)"
+            : `rgba(${COLORS.lockedRegionStroke[0]}, ${COLORS.lockedRegionStroke[1]}, ${COLORS.lockedRegionStroke[2]}, 0.4)`;
+          ctx.lineWidth = canClose ? 2.5 : 1.5;
+          ctx.setLineDash([6, 5]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        points.forEach((point, index) => {
+          const x = Number(point.x) - crop.x0;
+          const y = Number(point.y) - crop.y0;
+          const isStart = index === 0;
+          ctx.beginPath();
+          ctx.arc(x, y, isStart ? 5.5 : 4.2, 0, Math.PI * 2);
+          ctx.fillStyle = isStart && canClose
+            ? "rgba(255, 211, 141, 0.95)"
+            : `rgba(${COLORS.lockedRegionStroke[0]}, ${COLORS.lockedRegionStroke[1]}, ${COLORS.lockedRegionStroke[2]}, 0.98)`;
+          ctx.fill();
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = "rgba(9, 16, 24, 0.95)";
+          ctx.stroke();
+        });
+      }
+    }
+
+    function renderCanvas() {
+      if (!state.session || !state.image) {
+        el.canvasStage.hidden = true;
+        el.viewer.hidden = true;
+        el.empty.classList.remove("hidden");
+        return;
+      }
+
+      const target = getCurrentTarget();
+      const current = getCurrentHistory();
+      const compare = getCompareHistory();
+      const crop = computeCropBox(target);
+      const canvas = el.viewer;
+      const ctx = canvas.getContext("2d");
+      canvas.width = crop.width;
+      canvas.height = crop.height;
+      canvas.hidden = false;
+      el.canvasStage.hidden = false;
+      el.empty.classList.add("hidden");
+      if (state.autoFitPending) {
+        state.zoomPercent = computeFitZoomPercent(crop, target);
+        centerCanvasInViewport(crop, target);
+        state.autoFitPending = false;
+      }
+      applyCanvasZoom(crop);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(
+        state.image,
+        crop.x0,
+        crop.y0,
+        crop.width,
+        crop.height,
+        0,
+        0,
+        crop.width,
+        crop.height
+      );
+
+      if (compare) {
+        const decoded = decodeSimpleRLE(compare.mask_rle, compare.history_id);
+        ctx.drawImage(
+          buildMaskOverlayCanvas(decoded, crop, COLORS.compareMask, Number(el.compareOpacity.value)),
+          0,
+          0
+        );
+      }
+      if (current) {
+        const decoded = decodeSimpleRLE(current.mask_rle, current.history_id);
+        ctx.drawImage(
+          buildMaskOverlayCanvas(decoded, crop, COLORS.currentMask, Number(el.maskOpacity.value)),
+          0,
+          0
+        );
+      }
+
+      if (state.showBBox) {
+        const [x0, y0, x1, y1] = target.bbox_xyxy.map(Number);
+        ctx.strokeStyle = "rgba(64, 223, 133, 0.95)";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x0 - crop.x0, y0 - crop.y0, x1 - x0, y1 - y0);
+      }
+
+      if (state.showPromptBox) {
+        const [x0, y0, x1, y1] = state.session.prompt_box_xyxy.map(Number);
+        ctx.strokeStyle = "rgba(99, 210, 255, 0.95)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([10, 6]);
+        ctx.strokeRect(x0 - crop.x0, y0 - crop.y0, x1 - x0, y1 - y0);
+        ctx.setLineDash([]);
+      }
+
+      if (state.showPoints) {
+        drawPoints(ctx, state.session.system_prompt_points || [], crop, COLORS.system, 2.5);
+        drawPoints(ctx, state.session.working_points || [], crop, null, 2.5);
+        drawLineStrokes(ctx, state.session.line_strokes || [], crop);
+      }
+      drawLockedRegions(ctx, state.session.locked_regions || [], crop);
+    }
+
+    function renderAll() {
+      toggleModeButtons();
+      toggleToolButtons();
+      renderSourceSummary();
+      renderButtons();
+      renderMeta();
+      renderPointList();
+      renderStrokeList();
+      renderLockedRegionList();
+      renderHistoryList();
+      renderPreview();
+      renderCanvas();
+      renderValidateSection();
+    }
+
+    async function loadBootstrap() {
+      setBusy("Loading recent targets...");
+      try {
+        const payload = await apiGet("/api/bootstrap");
+        state.bootstrap = payload;
+        applyTargets(payload.recent_targets || [], "最近导入");
+        renderValidateSection();
+        clearBusy(`Loaded ${state.targets.length} recent targets.`);
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    function applySessionPayload(payload) {
+      state.session = payload.session;
+      state.validateSession = payload.validate_tools || state.validateSession;
+      ensureSessionPromptState(state.session);
+      state.maskCache.clear();
+      resetDrawingRegion();
+      state.drawingStroke.active = false;
+      state.drawingStroke.points = [];
+      if (!state.compareHistoryId || !state.session.history.some((item) => item.history_id === state.compareHistoryId)) {
+        state.compareHistoryId = null;
+      }
+      el.variantName.value = state.session.variant_name || "manual_clicks";
+      el.notesInput.value = state.session.notes || "";
+      el.textPromptInput.value = state.session.text_prompt || "";
+      renderAll();
+    }
+
+    function loadImageForTarget(targetKey) {
+      return new Promise((resolve, reject) => {
+        const image = new Image();
+        const version = ++state.imageVersion;
+        image.onload = () => {
+          if (version !== state.imageVersion) return;
+          state.image = image;
+          resolve();
+        };
+        image.onerror = () => reject(new Error("图片加载失败"));
+        image.src = `/api/targets/${encodeURIComponent(targetKey)}/image?ts=${Date.now()}`;
+      });
+    }
+
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function readFileAsText(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+        reader.readAsText(file, "utf-8");
+      });
+    }
+
+    function normalizeRelativePath(text) {
+      return String(text || "").replaceAll("\\", "/").replace(/^\/+/, "");
+    }
+
+    function getBaseName(fileName) {
+      return String(fileName || "").split(/[\\/]/).pop() || "";
+    }
+
+    function isImageFileName(fileName) {
+      return /\.(jpg|jpeg|png|webp|bmp)$/i.test(String(fileName || ""));
+    }
+
+    function stripRootFolder(relativePath) {
+      const normalized = normalizeRelativePath(relativePath);
+      const parts = normalized.split("/").filter(Boolean);
+      return parts.length > 1 ? parts.slice(1).join("/") : normalized;
+    }
+
+    function getSelectedFolderLabel(files) {
+      if (!files.length) return "";
+      const relativePath = normalizeRelativePath(files[0].webkitRelativePath || files[0].name);
+      return relativePath.split("/").filter(Boolean)[0] || "";
+    }
+
+    function buildImageFileIndex(files) {
+      const imagesByBaseName = new Map();
+      const imagesByRelativePath = new Map();
+
+      files.forEach((file) => {
+        const relativePath = normalizeRelativePath(file.webkitRelativePath || file.name);
+        const trimmedRelativePath = stripRootFolder(relativePath);
+        const baseName = getBaseName(relativePath);
+        if (isImageFileName(baseName)) {
+          if (!imagesByBaseName.has(baseName)) {
+            imagesByBaseName.set(baseName, []);
+          }
+          imagesByBaseName.get(baseName).push(file);
+          imagesByRelativePath.set(relativePath.toLowerCase(), file);
+          imagesByRelativePath.set(trimmedRelativePath.toLowerCase(), file);
+        }
+      });
+
+      return { imagesByBaseName, imagesByRelativePath };
+    }
+
+    function resolveImageFileForAnnotation(annotationPayload, annotationFile, imageIndex) {
+      const candidates = [];
+      const imageFileName = normalizeRelativePath(annotationPayload && annotationPayload.image_filename);
+      if (imageFileName) {
+        candidates.push(imageFileName);
+        candidates.push(stripRootFolder(imageFileName));
+        candidates.push(getBaseName(imageFileName));
+      }
+      const annotationRelative = normalizeRelativePath(annotationFile.webkitRelativePath || annotationFile.name);
+      const annotationBase = getBaseName(annotationRelative).replace(/\.json$/i, "");
+      if (annotationBase) {
+        candidates.push(`${annotationBase}.jpg`);
+        candidates.push(`${annotationBase}.jpeg`);
+        candidates.push(`${annotationBase}.png`);
+        candidates.push(`${annotationBase}.webp`);
+        candidates.push(`${annotationBase}.bmp`);
+      }
+
+      for (const candidate of candidates) {
+        const normalized = normalizeRelativePath(candidate);
+        const exact = imageIndex.imagesByRelativePath.get(normalized.toLowerCase());
+        if (exact) return exact;
+        const byBaseName = imageIndex.imagesByBaseName.get(getBaseName(normalized));
+        if (byBaseName && byBaseName.length) {
+          return byBaseName[0];
+        }
+      }
+      return null;
+    }
+
+    async function importCurrentFolders() {
+      const imageFiles = Array.from((el.imageFolderUpload.files || []));
+      const annotationFiles = Array.from((el.annotationFolderUpload.files || []))
+        .filter((file) => /\.json$/i.test(getBaseName(file.name)));
+
+      if (!imageFiles.length) {
+        setStatus("请先选择图片文件夹。", true);
+        return;
+      }
+      if (!annotationFiles.length) {
+        setStatus("请先选择标注文件夹。", true);
+        return;
+      }
+      try {
+        const imageIndex = buildImageFileIndex(imageFiles);
+        if (!imageIndex.imagesByBaseName.size) {
+          throw new Error("图片文件夹里没有找到图片文件。");
+        }
+
+        const importedTargets = [];
+        const skipped = [];
+        const imageFolderLabel = getSelectedFolderLabel(imageFiles) || "图片文件夹";
+        const annotationFolderLabel = getSelectedFolderLabel(annotationFiles) || "标注文件夹";
+
+        for (let index = 0; index < annotationFiles.length; index += 1) {
+          const annotationFile = annotationFiles[index];
+          setBusy(`Importing ${index + 1} / ${annotationFiles.length}...`);
+          const annotationText = await readFileAsText(annotationFile);
+          let annotationPayload = JSON.parse(annotationText);
+          if (Array.isArray(annotationPayload)) {
+            if (annotationPayload.length !== 1 || typeof annotationPayload[0] !== "object") {
+              skipped.push(`${annotationFile.name}: JSON 顶层不是单图对象`);
+              continue;
+            }
+            annotationPayload = annotationPayload[0];
+          }
+          const imageFile = resolveImageFileForAnnotation(annotationPayload, annotationFile, imageIndex);
+          if (!imageFile) {
+            skipped.push(`${annotationFile.name}: 找不到对应图片`);
+            continue;
+          }
+          const imageDataUrl = await readFileAsDataUrl(imageFile);
+          const payload = await apiPost("/api/import-targets", {
+            image_file_name: imageFile.name,
+            image_data_url: imageDataUrl,
+            annotation_file_name: annotationFile.name,
+            annotation_text: annotationText,
+          });
+          importedTargets.push(...(payload.targets || []));
+        }
+
+        if (!importedTargets.length) {
+          throw new Error(skipped.length ? skipped.join("；") : "没有成功导入任何目标。");
+        }
+
+        applyTargets(
+          importedTargets,
+          `图片: ${imageFolderLabel} | 标注: ${annotationFolderLabel} | ${annotationFiles.length} 个标注文件`
+        );
+        const summary = skipped.length
+          ? `Imported ${importedTargets.length} targets. Skipped ${skipped.length} annotation files.`
+          : `Imported ${importedTargets.length} targets from the selected folders.`;
+        clearBusy(summary);
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function importCurrentFoldersSafe() {
+      const imageFiles = Array.from((el.imageFolderUpload.files || []));
+      const annotationFiles = Array.from((el.annotationFolderUpload.files || []))
+        .filter((file) => /\.json$/i.test(getBaseName(file.name)));
+
+      if (!imageFiles.length) {
+        setStatus("请先选择图片文件夹。", true);
+        return;
+      }
+      if (!annotationFiles.length) {
+        setStatus("请先选择标注文件夹。", true);
+        return;
+      }
+
+      try {
+        const imageIndex = buildImageFileIndex(imageFiles);
+        if (!imageIndex.imagesByBaseName.size) {
+          throw new Error("图片文件夹里没有找到图片文件。");
+        }
+
+        const importedTargets = [];
+        const skipped = [];
+        const failed = [];
+        const imageFolderLabel = getSelectedFolderLabel(imageFiles) || "图片文件夹";
+        const annotationFolderLabel = getSelectedFolderLabel(annotationFiles) || "标注文件夹";
+
+        for (let index = 0; index < annotationFiles.length; index += 1) {
+          const annotationFile = annotationFiles[index];
+          const fileLabel = annotationFile.webkitRelativePath || annotationFile.name;
+          setBusy(`Importing ${index + 1} / ${annotationFiles.length}: ${fileLabel}`);
+          try {
+            const annotationText = await readFileAsText(annotationFile);
+            let annotationPayload = JSON.parse(annotationText);
+            if (Array.isArray(annotationPayload)) {
+              if (annotationPayload.length !== 1 || typeof annotationPayload[0] !== "object") {
+                skipped.push(`${annotationFile.name}: JSON 顶层不是单图对象`);
+                continue;
+              }
+              annotationPayload = annotationPayload[0];
+            }
+            const imageFile = resolveImageFileForAnnotation(annotationPayload, annotationFile, imageIndex);
+            if (!imageFile) {
+              skipped.push(`${annotationFile.name}: 找不到对应图片`);
+              continue;
+            }
+            const imageDataUrl = await readFileAsDataUrl(imageFile);
+            const payload = await apiPost("/api/import-targets", {
+              image_file_name: imageFile.name,
+              image_data_url: imageDataUrl,
+              annotation_file_name: annotationFile.name,
+              annotation_text: annotationText,
+            });
+            importedTargets.push(...(payload.targets || []));
+          } catch (error) {
+            failed.push(`${annotationFile.name}: ${error.message || error}`);
+          }
+        }
+
+        if (!importedTargets.length) {
+          const details = [...failed, ...skipped].slice(0, 10).join(" | ");
+          throw new Error(details || "没有成功导入任何目标。");
+        }
+
+        applyTargets(
+          importedTargets,
+          `图片: ${imageFolderLabel} | 标注: ${annotationFolderLabel} | ${annotationFiles.length} 个标注文件`
+        );
+
+        const parts = [`Imported ${importedTargets.length} targets from the selected folders.`];
+        if (failed.length) {
+          parts.push(`Failed ${failed.length}.`);
+        }
+        if (skipped.length) {
+          parts.push(`Skipped ${skipped.length}.`);
+        }
+        if (failed.length || skipped.length) {
+          parts.push([...failed, ...skipped].slice(0, 6).join(" | "));
+        }
+        clearBusy(parts.join(" "));
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function openCurrentTarget() {
+      if (!state.selectedTargetKey) return;
+      try {
+        setBusy("Opening session and generating initial mask...");
+        await loadImageForTarget(state.selectedTargetKey);
+        const payload = await apiPost("/api/open-session", { target_key: state.selectedTargetKey });
+        state.autoFitPending = true;
+        applySessionPayload(payload);
+        clearBusy("Session opened.");
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function syncMetadata() {
+      if (!state.session) return;
+      try {
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/metadata`, {
+          variant_name: el.variantName.value,
+          notes: el.notesInput.value,
+        });
+        applySessionPayload(payload);
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    function gotoRelativeTarget(offset) {
+      if (!state.filteredTargets.length) return;
+      const index = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
+      const nextIndex = clamp(index + offset, 0, state.filteredTargets.length - 1);
+      state.selectedTargetKey = state.filteredTargets[nextIndex].key;
+      el.targetSelect.value = state.selectedTargetKey;
+      const currentIndex = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
+      el.targetSummary.textContent = `目标 ${currentIndex + 1} / ${state.filteredTargets.length}`;
+      renderButtons();
+    }
+
+    async function handleIterate() {
+      if (!state.session) return;
+      try {
+        setBusy("Running one local SAM3 iteration...");
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/iterate`, {
+          text_prompt: el.textPromptInput.value,
+          line_strokes: state.session.line_strokes || [],
+        });
+        applySessionPayload(payload);
+        clearBusy("New mask generated.");
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function handleUndo() {
+      if (!state.session) return;
+      try {
+        setBusy("Undoing last point...");
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/undo`, {});
+        applySessionPayload(payload);
+        clearBusy("Last point undone.");
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function handleClearPoints() {
+      if (!state.session) return;
+      try {
+        setBusy("Clearing working points...");
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/clear-points`, {});
+        applySessionPayload(payload);
+        clearBusy("Working points cleared.");
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function handleClearLines() {
+      if (!state.session) return;
+      state.session.line_strokes = [];
+      state.drawingStroke.active = false;
+      state.drawingStroke.points = [];
+      renderAll();
+      try {
+        setBusy("Clearing line prompts...");
+        await syncPromptState();
+        clearBusy("Line prompts cleared.");
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function saveLockedRegion(regionPoints) {
+      if (!state.session || !regionPoints || regionPoints.length < 3) {
+        renderCanvas();
+        return false;
+      }
+      try {
+        setBusy("Locking selected mask region...");
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/lock-region`, {
+          points: regionPoints,
+        });
+        applySessionPayload(payload);
+        clearBusy("Locked region saved.");
+        return true;
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+        return false;
+      }
+    }
+
+    async function handleDeleteTarget() {
+      if (!state.session) return;
+      const target = state.session.target;
+      const ok = window.confirm(`删除当前框？\n${target.category_name} | ${target.annotation_id}`);
+      if (!ok) return;
+      try {
+        setBusy("Deleting current target...");
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/delete-target`, {});
+        const deletedKey = payload.deleted_target_key;
+        if (payload.bootstrap) {
+          state.bootstrap = payload.bootstrap;
+        }
+        const remainingTargets = (state.targets || []).filter((item) => item.key !== deletedKey);
+        applyTargets(remainingTargets, state.targetSourceLabel);
+        clearBusy("Current target deleted. Export deletion records when ready.");
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function downloadExport(format) {
+      if (!state.session) return;
+      try {
+        const response = await fetch(`/api/sessions/${encodeURIComponent(state.session.session_id)}/export?format=${format}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          const payload = await response.json();
+          throw new Error(payload.error || "Export failed");
+        }
+        const blob = await response.blob();
+        const disposition = response.headers.get("Content-Disposition") || "";
+        const match = disposition.match(/filename="([^"]+)"/);
+        const fileName = match ? match[1] : `${format}.json`;
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = fileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+        setStatus(`Exported ${fileName}`);
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function downloadDeletionExport() {
+      try {
+        const response = await fetch("/api/deletions/export", { cache: "no-store" });
+        if (!response.ok) {
+          const payload = await response.json();
+          throw new Error(payload.error || "Deletion export failed");
+        }
+        const blob = await response.blob();
+        const disposition = response.headers.get("Content-Disposition") || "";
+        const match = disposition.match(/filename=\"([^\"]+)\"/);
+        const fileName = match ? match[1] : "deleted_targets.json";
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = fileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+        setStatus(`Exported ${fileName}`);
+      } catch (error) {
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    function clientToImageXY(event) {
+      const target = getCurrentTarget();
+      if (!target || !state.session) return null;
+      const crop = computeCropBox(target);
+      const rect = el.viewer.getBoundingClientRect();
+      if (
+        event.clientX < rect.left ||
+        event.clientX > rect.right ||
+        event.clientY < rect.top ||
+        event.clientY > rect.bottom
+      ) {
+        return null;
+      }
+      const scaleX = crop.width / Math.max(1, rect.width);
+      const scaleY = crop.height / Math.max(1, rect.height);
+      const x = crop.x0 + clamp((event.clientX - rect.left) * scaleX, 0, crop.width - 1);
+      const y = crop.y0 + clamp((event.clientY - rect.top) * scaleY, 0, crop.height - 1);
+      return { x, y };
+    }
+
+    async function addPointAtEvent(event) {
+      if (!state.session || state.busy) return;
+      const xy = clientToImageXY(event);
+      if (!xy) return;
+      try {
+        setBusy(`Adding ${state.currentLabel === 1 ? "foreground" : "background"} point...`);
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/points`, {
+          x: xy.x,
+          y: xy.y,
+          label: state.currentLabel,
+        });
+        applySessionPayload(payload);
+        clearBusy(`Added ${state.currentLabel === 1 ? "foreground" : "background"} point.`);
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function completeDrawingRegion() {
+      const regionPoints = normalizeRegionPointsForSave(state.drawingRegion.points || []);
+      if (!state.session) return;
+      if (!regionPoints) {
+        setStatus("闭合锁区需要至少 3 个不重合的顶点，而且面积不能太小。", true);
+        renderCanvas();
+        return;
+      }
+      resetDrawingRegion();
+      renderCanvas();
+      const ok = await saveLockedRegion(regionPoints);
+      if (!ok) {
+        state.drawingRegion.active = true;
+        state.drawingRegion.points = regionPoints;
+        state.drawingRegion.hoverPoint = regionPoints[regionPoints.length - 1] || null;
+        updateRegionToolStatus();
+        renderCanvas();
+      }
+    }
+
+    function setCurrentTool(toolName) {
+      state.currentTool = toolName;
+      state.drag.active = false;
+      state.drag.moved = false;
+      state.drawingStroke.active = false;
+      state.drawingStroke.points = [];
+      resetDrawingRegion();
+      el.viewer.classList.remove("dragging");
+      toggleToolButtons();
+      if (toolName === "region") {
+        updateRegionToolStatus();
+      }
+      renderCanvas();
+    }
+
+    function handleCanvasMouseDown(event) {
+      if (!state.session || state.busy || event.button !== 0) return;
+      if (state.currentTool === "line") {
+        const xy = clientToImageXY(event);
+        if (!xy) return;
+        state.drawingStroke.active = true;
+        state.drawingStroke.points = [xy];
+        renderCanvas();
+        return;
+      }
+      if (state.currentTool === "region") {
+        event.preventDefault();
+        const xy = clientToImageXY(event);
+        if (!xy) return;
+        if (!state.drawingRegion.active) {
+          state.drawingRegion.active = true;
+          state.drawingRegion.points = [xy];
+          state.drawingRegion.hoverPoint = xy;
+          updateRegionToolStatus();
+          renderCanvas();
+          return;
+        }
+        if (isEventNearRegionStart(event, true)) {
+          state.drawingRegion.hoverPoint = state.drawingRegion.points[0];
+          void completeDrawingRegion();
+          return;
+        }
+        const startPoint = state.drawingRegion.points[0];
+        if (startPoint && isEventNearRegionStart(event, false)) {
+          setStatus("还差一个有效顶点。请先继续添加顶点，或者点击“固定锁区”完成当前多边形。", true);
+          renderLockedRegionList();
+          renderButtons();
+          renderCanvas();
+          return;
+        }
+        const points = state.drawingRegion.points;
+        const lastPoint = points[points.length - 1];
+        if (distanceBetweenPoints(lastPoint, xy) <= getRegionCloseThreshold() * 0.4) {
+          return;
+        }
+        points.push(xy);
+        state.drawingRegion.hoverPoint = xy;
+        updateRegionToolStatus();
+        renderCanvas();
+        return;
+      }
+      state.drag.active = true;
+      state.drag.moved = false;
+      state.drag.startClientX = event.clientX;
+      state.drag.startClientY = event.clientY;
+      state.drag.startPanX = state.panX;
+      state.drag.startPanY = state.panY;
+      if (state.currentTool === "pan") {
+        el.viewer.classList.add("dragging");
+      }
+    }
+
+    function handleCanvasMouseMove(event) {
+      const target = getCurrentTarget();
+      if (!target) return;
+      if (state.currentTool === "line" && state.drawingStroke.active) {
+        const xy = clientToImageXY(event);
+        if (!xy) return;
+        const points = state.drawingStroke.points;
+        const lastPoint = points[points.length - 1];
+        if (!lastPoint || Math.hypot(lastPoint.x - xy.x, lastPoint.y - xy.y) >= 2.5) {
+          points.push(xy);
+          renderCanvas();
+        }
+        return;
+      }
+      if (state.currentTool === "region" && state.drawingRegion.active) {
+        const xy = clientToImageXY(event);
+        const lastHover = state.drawingRegion.hoverPoint;
+        if (!xy) {
+          if (lastHover) {
+            state.drawingRegion.hoverPoint = null;
+            renderCanvas();
+          }
+          return;
+        }
+        if (!lastHover || distanceBetweenPoints(lastHover, xy) >= 0.75) {
+          state.drawingRegion.hoverPoint = xy;
+          renderCanvas();
+        }
+        return;
+      }
+      if (!state.drag.active) return;
+      const dx = event.clientX - state.drag.startClientX;
+      const dy = event.clientY - state.drag.startClientY;
+      if (!state.drag.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        state.drag.moved = true;
+      }
+      if (!state.drag.moved) return;
+      if (state.currentTool !== "pan") return;
+      state.panX = state.drag.startPanX + dx;
+      state.panY = state.drag.startPanY + dy;
+      applyCanvasZoom(computeCropBox(target));
+    }
+
+    async function handleCanvasMouseUp(event) {
+      if (state.currentTool === "line" && state.drawingStroke.active) {
+        const strokePoints = state.drawingStroke.points.slice();
+        state.drawingStroke.active = false;
+        state.drawingStroke.points = [];
+        if (!strokePoints.length || !state.session) {
+          renderCanvas();
+          return;
+        }
+        state.session.line_strokes = state.session.line_strokes || [];
+        state.session.line_strokes.push({
+          stroke_id: `stroke_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          label: state.currentLabel,
+          created_at: new Date().toISOString(),
+          source: "manual",
+          points: strokePoints,
+        });
+        renderAll();
+        try {
+          setBusy(`Saving ${state.currentLabel === 1 ? "foreground" : "background"} stroke...`);
+          await syncPromptState();
+          clearBusy("Line prompt saved.");
+        } catch (error) {
+          state.busy = false;
+          renderButtons();
+          setStatus(error.message || String(error), true);
+        }
+        return;
+      }
+      if (!state.drag.active) return;
+      const moved = state.drag.moved;
+      state.drag.active = false;
+      state.drag.moved = false;
+      el.viewer.classList.remove("dragging");
+      if (!moved && state.currentTool === "point") {
+        await addPointAtEvent(event);
+      }
+    }
+
+    function handleGlobalKeyDown(event) {
+      if (state.currentTool !== "region" || state.busy) return;
+      if (event.key === "Escape") {
+        if (!state.drawingRegion.active || !(state.drawingRegion.points || []).length) return;
+        event.preventDefault();
+        resetDrawingRegion();
+        updateRegionToolStatus();
+        renderCanvas();
+        return;
+      }
+      if (event.key === "Enter" || event.key === "NumpadEnter") {
+        if (!state.drawingRegion.active) return;
+        event.preventDefault();
+        void completeDrawingRegion();
+      }
+    }
+
+    function bindEvents() {
+      el.importBtn.addEventListener("click", importCurrentFoldersSafe);
+      el.searchInput.addEventListener("input", () => {
+        renderTargetList();
+        renderSourceSummary();
+      });
+      el.categoryFilter.addEventListener("change", () => {
+        renderTargetList();
+        renderButtons();
+      });
+      el.targetSelect.addEventListener("change", () => {
+        state.selectedTargetKey = el.targetSelect.value;
+        const index = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
+        if (index >= 0) {
+          el.targetSummary.textContent = `目标 ${index + 1} / ${state.filteredTargets.length}`;
+        }
+        renderButtons();
+      });
+      el.prevTargetBtn.addEventListener("click", () => gotoRelativeTarget(-1));
+      el.nextTargetBtn.addEventListener("click", () => gotoRelativeTarget(1));
+      el.openSessionBtn.addEventListener("click", openCurrentTarget);
+      el.contextPad.addEventListener("input", () => {
+        state.autoFitPending = true;
+        renderAll();
+      });
+      el.maskOpacity.addEventListener("input", renderCanvas);
+      el.compareOpacity.addEventListener("input", renderCanvas);
+      el.variantName.addEventListener("change", syncMetadata);
+      el.notesInput.addEventListener("change", syncMetadata);
+      el.toggleBBoxBtn.addEventListener("click", () => { state.showBBox = !state.showBBox; renderAll(); });
+      el.togglePromptBoxBtn.addEventListener("click", () => { state.showPromptBox = !state.showPromptBox; renderAll(); });
+      el.togglePointsBtn.addEventListener("click", () => { state.showPoints = !state.showPoints; renderAll(); });
+      el.clearCompareBtn.addEventListener("click", () => { state.compareHistoryId = null; renderAll(); });
+      el.fgModeBtn.addEventListener("click", () => { state.currentLabel = 1; toggleModeButtons(); renderCanvas(); });
+      el.bgModeBtn.addEventListener("click", () => { state.currentLabel = 0; toggleModeButtons(); renderCanvas(); });
+      el.pointToolBtn.addEventListener("click", () => setCurrentTool("point"));
+      el.lineToolBtn.addEventListener("click", () => setCurrentTool("line"));
+      el.lockRegionToolBtn.addEventListener("click", () => setCurrentTool("region"));
+      el.panToolBtn.addEventListener("click", () => setCurrentTool("pan"));
+      el.commitRegionBtn.addEventListener("click", () => {
+        if (state.currentTool !== "region" || state.busy) return;
+        void completeDrawingRegion();
+      });
+      el.cancelRegionBtn.addEventListener("click", () => {
+        if (state.currentTool !== "region" || state.busy) return;
+        resetDrawingRegion();
+        updateRegionToolStatus();
+        renderCanvas();
+      });
+      el.validateRunBtn.addEventListener("click", () => runValidateTools("validate"));
+      el.textPromptInput.addEventListener("input", () => {
+        if (!state.session) return;
+        state.session.text_prompt = el.textPromptInput.value;
+        renderMeta();
+        renderPreview();
+      });
+      el.textPromptInput.addEventListener("change", async () => {
+        if (!state.session) return;
+        try {
+          await syncPromptState();
+        } catch (error) {
+          setStatus(error.message || String(error), true);
+        }
+      });
+      el.iterateBtn.addEventListener("click", handleIterate);
+      el.undoBtn.addEventListener("click", handleUndo);
+      el.clearPointsBtn.addEventListener("click", handleClearPoints);
+      el.clearLinesBtn.addEventListener("click", handleClearLines);
+      el.deleteTargetBtn.addEventListener("click", handleDeleteTarget);
+      el.exportLegacyBtn.addEventListener("click", () => downloadExport("legacy"));
+      el.exportSessionBtn.addEventListener("click", () => downloadExport("session"));
+      el.exportDeletedBtn.addEventListener("click", downloadDeletionExport);
+      el.canvasWrap.addEventListener("wheel", handleCanvasWheel, { passive: false });
+      el.viewer.addEventListener("mousedown", handleCanvasMouseDown);
+      el.viewer.addEventListener("contextmenu", (event) => {
+        if (state.currentTool === "region") {
+          event.preventDefault();
+        }
+      });
+      el.viewer.addEventListener("dblclick", (event) => {
+        if (state.currentTool !== "region" || state.busy || !state.drawingRegion.active) return;
+        event.preventDefault();
+        void completeDrawingRegion();
+      });
+      window.addEventListener("mousemove", handleCanvasMouseMove);
+      window.addEventListener("mouseup", handleCanvasMouseUp);
+      window.addEventListener("keydown", handleGlobalKeyDown);
+      window.addEventListener("resize", () => {
+        if (state.session && state.image) {
+          renderCanvas();
+        }
+      });
+    }
+
+    bindEvents();
+    toggleModeButtons();
+    toggleToolButtons();
+    renderButtons();
+    renderCategoryFilter();
+    renderTargetList();
+    renderSourceSummary();
+    renderMeta();
+    renderPointList();
+    renderStrokeList();
+    renderLockedRegionList();
+    renderHistoryList();
+    renderPreview();
+    renderValidateSection();
+    loadBootstrap();
+  </script>
+</body>
+</html>

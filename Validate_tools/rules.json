@@ -1,0 +1,338 @@
+{
+    "handbag": {
+        "category_id": "1",
+        "definition": "手提包",
+        "distinction_rules": "带带子（链子）的，没有带子（硬盘包等）不需要被标注",
+        "examples": ""
+    },
+    "backpack": {
+        "category_id": "2",
+        "definition": "双肩包",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "bottle": {
+        "category_id": "3",
+        "definition": "各种瓶瓶罐罐",
+        "distinction_rules": "易与cup混淆。所有瓶子（洗漱用品中的各类瓶子），细口的水杯（如运动水杯）、水瓶（各类饮料瓶子）都是bottle",
+        "examples": ""
+    },
+    "wine glass": {
+        "category_id": "4",
+        "definition": "酒杯",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "cup": {
+        "category_id": "5",
+        "definition": "水杯、咖啡杯、调料杯、玻璃杯、笔筒、牙杯等",
+        "distinction_rules": "易与bottle混淆。所有宽口的（无论是否盖盖子，盖子和口大小贴近）都是cup",
+        "examples": ""
+    },
+    "bowl": {
+        "category_id": "6",
+        "definition": "厨房、餐桌（陶瓷、不锈钢、塑料、盆、盘子、餐盘、碗等）",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "fork": {
+        "category_id": "7",
+        "definition": "聚餐场景、餐桌、厨房、饭盒中的叉子",
+        "distinction_rules": "在遮挡状态下易与spoon混淆，可以根据场景，如旁边是汉堡、蛋糕等食物，则标记为fork。",
+        "examples": ""
+    },
+    "spoon": {
+        "category_id": "8",
+        "definition": "勺子，炒菜的勺子、各种用途的都算，包括特别小的咖啡勺调料勺塑料勺等",
+        "distinction_rules": "所有餐具中的、厨房用的各类（不同大小用途）圆的/椭圆的带长手柄的标记为spoon。在遮挡状态下易与fork混淆，可以根据场景，如摆放在碗里、杯子里，旁边是咖啡杯，则标记为spoon。",
+        "examples": ""
+    },
+    "knife": {
+        "category_id": "9",
+        "definition": "刀叉里面的、切菜的、削水果、厨房不同种类的刀、蛋糕刀，所有常见刀类",
+        "distinction_rules": "刮皮刀不标记。",
+        "examples": ""
+    },
+    "banana": {
+        "category_id": "10",
+        "definition": "水果、水果盘、果肉（切开的）、花纹图案、苹果电脑图标（特指苹果类别）、各种形状类似于这一种类的",
+        "distinction_rules": "不同状态下的三种水果、果肉、三种水果图案都进行标记。",
+        "examples": ""
+    },
+    "apple": {
+        "category_id": "11",
+        "definition": "水果、水果盘、果肉（切开的）、花纹图案、苹果电脑图标（特指苹果类别）、各种形状类似于这一种类的",
+        "distinction_rules": "不同状态下的三种水果、果肉、三种水果图案都进行标记。",
+        "examples": ""
+    },
+    "orange": {
+        "category_id": "12",
+        "definition": "水果、水果盘、果肉（切开的）、花纹图案、苹果电脑图标（特指苹果类别）、各种形状类似于这一种类的",
+        "distinction_rules": "不同状态下的三种水果、果肉、三种水果图案都进行标记。",
+        "examples": ""
+    },
+    "dining table": {
+        "category_id": "13",
+        "definition": "带食品的、带桌布的、局部的、完整的，所有餐桌",
+        "distinction_rules": "办公桌不标记，其他小桌子（长条形、圆形等）都标记。",
+        "examples": ""
+    },
+    "chair": {
+        "category_id": "14",
+        "definition": "椅子",
+        "distinction_rules": "不同材质、有/无靠背的椅子都标记。易与couch混淆，所有单人的座椅都标记为chair。",
+        "examples": ""
+    },
+    "potted plant": {
+        "category_id": "15",
+        "definition": "盆栽",
+        "distinction_rules": "所有室内带盆、带花瓶的（无论盆和花瓶是否可见），如果盆可见，框同时包含植物和盆。",
+        "examples": ""
+    },
+    "couch": {
+        "category_id": "16",
+        "definition": "客厅（局部，整个的，大面积人遮挡）、餐厅长条座位、单个沙发椅",
+        "distinction_rules": "不同材质、多人的沙发。易与chair混淆，所有单人的都标记被chair，多人的标记为couch。",
+        "examples": ""
+    },
+    "bed": {
+        "category_id": "17",
+        "definition": "医院的床、折叠床、卧室床、儿童床，局部\\整个",
+        "distinction_rules": "框范围为床头+床体+床脚+床垫的全部可视范围。局部的床体易与couch局部混淆，可根据环境背景和其他物体进行区分，较平整的带床品（如绒/布床单、被子、枕头等）、或平整面与靠背不同材质的为bed，平面为其他材质或倾角两面为同一材质的为couch。",
+        "examples": ""
+    },
+    "refrigerator": {
+        "category_id": "18",
+        "definition": "常见的不同型号款式大小的冰箱、冰柜、冷藏柜（冷饮柜）。包括独立摆放的、嵌入的、打开的。",
+        "distinction_rules": "框包围整个立方体外边界全部可视部分。该类别易出现大面积截断，",
+        "examples": ""
+    },
+    "microwave": {
+        "category_id": "19",
+        "definition": "厨房、餐桌、墙壁嵌入的，打开/关闭的，完整/局部的，有/无食物的，带面板的长方体",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "sink": {
+        "category_id": "20",
+        "definition": "各种水池，看不见水池的单水龙头不标记",
+        "distinction_rules": "边框包含水池部分与边缘。该类别在不同视角下被遮挡严重，需根据水龙头等信息判定。",
+        "examples": ""
+    },
+    "cell phone": {
+        "category_id": "21",
+        "definition": "正面、背面、多个的",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "remote": {
+        "category_id": "22",
+        "definition": "电视、空调、游戏机、体感游戏、无人机等类似形状的遥控器",
+        "distinction_rules": "注意很多时候它与背景颜色接近，容易漏掉",
+        "examples": ""
+    },
+    "laptop": {
+        "category_id": "23",
+        "definition": "放在桌子上、包里、截断、打开画面的都需要标记",
+        "distinction_rules": "截断出现较多",
+        "examples": ""
+    },
+    "keyboard": {
+        "category_id": "24",
+        "definition": "键盘、笔记本电脑键盘、音乐键盘",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "mouse": {
+        "category_id": "25",
+        "definition": "鼠标",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "tv": {
+        "category_id": "26",
+        "definition": "电视、显示器、投影幕布、会议室预约显示屏、点菜单",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "teddy bear": {
+        "category_id": "27",
+        "definition": "不同大小的熊",
+        "distinction_rules": "其他毛绒玩具不标注（草莓熊不算）",
+        "examples": ""
+    },
+    "scissors": {
+        "category_id": "28",
+        "definition": "不同大小远近不同形状剪刀的不同使用方式",
+        "distinction_rules": "个别场景中有一个蓝色的剪刀，跟其他形状不太一样，注意不要漏掉",
+        "examples": ""
+    },
+    "vase": {
+        "category_id": "29",
+        "definition": "有无/花的花瓶、装花的纸袋、装饰用的陶瓷瓶玻璃瓶等",
+        "distinction_rules": "绿植下的普通花盆不标记",
+        "examples": ""
+    },
+    "book": {
+        "category_id": "30",
+        "definition": "带厚度的书、本",
+        "distinction_rules": "桌子上，书架上（组），手册笔记等，需要对每本单独标注，书架上多个连续摆放的需要对整体框出标记为一组，同时其中可区分开的每册需要单独标记为一个。",
+        "examples": ""
+    },
+    "clock": {
+        "category_id": "31",
+        "definition": "指针指示的、数字显示时间的",
+        "distinction_rules": "钟、表、手机显示的时钟画面",
+        "examples": ""
+    },
+    "cake": {
+        "category_id": "32",
+        "definition": "各种形状的蛋糕",
+        "distinction_rules": "每个都需要单独标记，即使相互遮挡",
+        "examples": ""
+    },
+    "pizza": {
+        "category_id": "33",
+        "definition": "带芝士、馅料的饼",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "sandwich": {
+        "category_id": "34",
+        "definition": "汉堡、各种面包+蔬菜肉芝士",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "carrot": {
+        "category_id": "35",
+        "definition": "整颗，菜、沙拉中的，电脑画面、图片中的胡萝卜",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "broccoli": {
+        "category_id": "36",
+        "definition": "超市、菜中的西兰花",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "hot dog": {
+        "category_id": "37",
+        "definition": "在面包中的，单独的烤肠",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "donut": {
+        "category_id": "38",
+        "definition": "甜甜圈",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "hair drier": {
+        "category_id": "39",
+        "definition": "吹头发，不同形状，不同颜色",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "toothbrush": {
+        "category_id": "40",
+        "definition": "刷牙的、牙桶中的",
+        "distinction_rules": "有一些摆放在桌面上，模糊情况下易与笔混淆，可根据杯子和杯子内其他目标判断",
+        "examples": ""
+    },
+    "umbrella": {
+        "category_id": "41",
+        "definition": "各种形状的雨伞，打开的、折叠的",
+        "distinction_rules": "每把伞需单独标记",
+        "examples": ""
+    },
+    "toaster": {
+        "category_id": "42",
+        "definition": "主要分两种类型，平底平铺的，竖着放面包的两种",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "oven": {
+        "category_id": "43",
+        "definition": "燃气灶台、大小烤箱、洗碗机（嵌入的）",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "person": {
+        "category_id": "44",
+        "definition": "完整/局部的、手、脚",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "cookies": {
+        "category_id": "45",
+        "definition": "不同形状、颜色、带包装不带包装的饼干",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "pillow": {
+        "category_id": "46",
+        "definition": "椅子上、床上，不同形状颜色",
+        "distinction_rules": "（注意跟背景色接近的、暗光环境下的）",
+        "examples": ""
+    },
+    "framed picture(pcitures)": {
+        "category_id": "47",
+        "definition": "相框、墙壁装饰画等",
+        "distinction_rules": "（有些平放在书中，注意）",
+        "examples": ""
+    },
+    "trash can": {
+        "category_id": "48",
+        "definition": "桌面、地面、厨房大垃圾桶",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "pens": {
+        "category_id": "49",
+        "definition": "钢笔、中性笔、铅笔、马克笔、不同种类",
+        "distinction_rules": "笔筒中可见和局部可见的笔和成盒的笔可以成组标记，需注意笔筒中有一些不是笔，需要拆分成多组）",
+        "examples": ""
+    },
+    "Water dispenser": {
+        "category_id": "50",
+        "definition": "饮水机",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "coffee maker": {
+        "category_id": "51",
+        "definition": "咖啡机",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "pot": {
+        "category_id": "52",
+        "definition": "所有深底的都是锅，包括电饭煲等电锅和厨房用锅",
+        "distinction_rules": "",
+        "examples": ""
+    },
+    "switch": {
+        "category_id": "53",
+        "definition": "特指墙壁上的开关（灯的按压开关）",
+        "distinction_rules": "仅限墙壁按的开关",
+        "examples": ""
+    },
+    "Power outlet": {
+        "category_id": "54",
+        "definition": "墙面插座，插排",
+        "distinction_rules": "墙壁电源只包括2孔和3孔的插座，不包括",
+        "examples": ""
+    },
+    "cabinet": {
+        "category_id": "55",
+        "definition": "柜子",
+        "distinction_rules": "墙壁上的、床头柜、书柜、餐边柜等带抽屉、推拉门的柜子",
+        "examples": ""
+    },
+    "cloth": {
+        "category_id": "56",
+        "definition": "衣服",
+        "distinction_rules": "放在沙发椅子柜子上的衣服均需要标记，人身上的不标记，放置的桌布、床品不标记",
+        "examples": ""
+    }
+}
