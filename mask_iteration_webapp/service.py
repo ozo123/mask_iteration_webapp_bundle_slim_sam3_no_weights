@@ -52,6 +52,9 @@ class SessionStore:
     def session_json_path(self, target_key: str) -> Path:
         return self.session_dir(target_key) / "session.json"
 
+    def image_deletions_path(self) -> Path:
+        return self.sessions_root / "image_deletions.json"
+
     def load_session(self, target_key: str) -> SessionState | None:
         path = self.session_json_path(target_key)
         if not path.exists():
@@ -86,6 +89,26 @@ class SessionStore:
         output_path = export_dir / export_name
         output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return output_path
+
+    def list_image_deletion_records(self) -> list[dict[str, Any]]:
+        path = self.image_deletions_path()
+        if not path.exists():
+            return []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        records = payload.get("records") or []
+        return [record for record in records if isinstance(record, dict)]
+
+    def add_image_deletion_record(self, record: dict[str, Any]) -> None:
+        path = self.image_deletions_path()
+        with self._lock:
+            payload = {"schema_version": 1, "records": self.list_image_deletion_records()}
+            existing_ids = {str(item.get("deletion_id") or "") for item in payload["records"]}
+            if str(record.get("deletion_id") or "") not in existing_ids:
+                payload["records"].append(record)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def list_session_meta(self) -> dict[str, dict[str, Any]]:
         results: dict[str, dict[str, Any]] = {}
@@ -122,6 +145,15 @@ class UploadedTargetStore:
         if key not in self._targets_by_key:
             raise KeyError(f"Unknown target key: {key}")
         return self._targets_by_key[key]
+
+    def targets_for_image(self, target: TargetRecord) -> list[TargetRecord]:
+        return [
+            candidate
+            for candidate in self._targets_by_key.values()
+            if candidate.image_path == target.image_path
+            and candidate.image_file_name == target.image_file_name
+            and candidate.import_id == target.import_id
+        ]
 
     def recent_targets(self, limit: int = 200) -> list[TargetRecord]:
         imports = sorted(
@@ -728,6 +760,17 @@ class Sam3InferenceService:
 
         point_coords = None
         point_labels = None
+        if not working_points:
+            working_points = [
+                PointRecord(
+                    point_id="system_box_center_iteration",
+                    x=float(self._center_of_box_xyxy(prompt_box_xyxy)[0]),
+                    y=float(self._center_of_box_xyxy(prompt_box_xyxy)[1]),
+                    label=1,
+                    created_at=utc_now_iso(),
+                    source="system",
+                )
+            ]
         if working_points:
             point_coords = np.asarray([[float(point.x), float(point.y)] for point in working_points], dtype=np.float32)
             point_labels = np.asarray([int(point.label) for point in working_points], dtype=np.int32)
@@ -779,10 +822,17 @@ class MaskIterationService:
 
     def bootstrap_payload(self) -> dict[str, Any]:
         session_meta = self.session_store.list_session_meta()
+        image_deletion_records = self.session_store.list_image_deletion_records()
+        image_deleted_keys = {
+            str(target_key)
+            for record in image_deletion_records
+            for target_key in (record.get("target_keys") or [])
+        }
         recent_targets = [
             self._target_payload(target, session_meta.get(target.key, {}))
             for target in self.target_store.recent_targets()
             if not bool((session_meta.get(target.key, {}) or {}).get("is_deleted", False))
+            and target.key not in image_deleted_keys
         ]
         return {
             "app": {
@@ -791,6 +841,7 @@ class MaskIterationService:
                 "sam3": self.inference_service.readiness(),
             },
             "recent_targets": recent_targets,
+            "image_deletions": image_deletion_records,
             "validate_tools": self._build_validate_tools_payload(),
         }
 
@@ -1806,6 +1857,41 @@ class MaskIterationService:
             self.session_store.save_session(session)
             return self._session_payload(session)
 
+    def delete_locked_region(self, target_key: str, region_id: str) -> dict[str, Any]:
+        with self._lock:
+            session = self._require_session(target_key)
+            before_count = len(session.locked_regions)
+            session.locked_regions = [
+                region for region in session.locked_regions if region.region_id != region_id
+            ]
+            if len(session.locked_regions) == before_count:
+                raise KeyError(f"Locked region not found: {region_id}")
+
+            current = session.current_history()
+            current_mask = self.inference_service.mask_from_rle(current.mask_rle)
+            updated_logits = self._fallback_logits_from_mask(current_mask)
+            history_index = sum(1 for item in session.history if item.kind == "region_unlock") + 1
+            history_id = f"unlock_{uuid4().hex[:12]}"
+            created_at = utc_now_iso()
+            new_history = self._build_history_from_mask_and_logits(
+                session=session,
+                current=current,
+                history_id=history_id,
+                name=f"unlock{history_index}",
+                kind="region_unlock",
+                created_at=created_at,
+                mask=current_mask,
+                logits=updated_logits,
+                score=current.score,
+            )
+            session.history.append(new_history)
+            logits_relpath = self.session_store.save_logits(session, history_id, updated_logits)
+            new_history.mask_logits_relpath = logits_relpath
+            session.current_history_id = history_id
+            session.updated_at = created_at
+            self.session_store.save_session(session)
+            return self._session_payload(session)
+
     def delete_target(self, target_key: str) -> dict[str, Any]:
         with self._lock:
             session = self._require_session(target_key)
@@ -1819,6 +1905,53 @@ class MaskIterationService:
                 "deleted_target_key": target_key,
                 "deleted_at": deleted_at,
                 "target": session.target.to_dict(),
+                "bootstrap": self.bootstrap_payload(),
+            }
+
+    def delete_image(self, target_key: str) -> dict[str, Any]:
+        with self._lock:
+            target = self.target_store.get_target(target_key)
+            image_targets = sorted(
+                self.target_store.targets_for_image(target),
+                key=lambda item: int(item.result_index),
+            )
+            if not image_targets:
+                raise KeyError(f"No targets found for image: {target.image_file_name}")
+
+            deleted_at = utc_now_iso()
+            for image_target in image_targets:
+                session = self.session_store.load_session(image_target.key)
+                if session is None:
+                    continue
+                session.is_deleted = True
+                session.deleted_at = deleted_at
+                session.updated_at = deleted_at
+                self.session_store.save_session(session)
+
+            record = {
+                "schema_version": 1,
+                "deletion_id": f"image_delete_{uuid4().hex[:12]}",
+                "scope": "image",
+                "deleted_at": deleted_at,
+                "source": "mask_iteration_webapp",
+                "image_file_name": target.image_file_name,
+                "image_path": target.image_path,
+                "import_id": target.import_id,
+                "target_count": len(image_targets),
+                "target_keys": [item.key for item in image_targets],
+                "annotation_file_names": sorted({item.annotation_file_name for item in image_targets}),
+                "annotation_json_paths": sorted({item.annotation_json_path for item in image_targets}),
+                "targets": [item.to_dict() for item in image_targets],
+            }
+            self.session_store.add_image_deletion_record(record)
+            return {
+                "ok": True,
+                "deleted_scope": "image",
+                "deleted_at": deleted_at,
+                "deleted_image_file_name": target.image_file_name,
+                "deleted_target_keys": [item.key for item in image_targets],
+                "deleted_target_count": len(image_targets),
+                "image_deletion": record,
                 "bootstrap": self.bootstrap_payload(),
             }
 
@@ -1961,6 +2094,7 @@ class MaskIterationService:
     def export_deleted_targets_payload(self) -> tuple[dict[str, Any], str]:
         deleted_targets: list[dict[str, Any]] = []
         grouped: dict[str, dict[str, Any]] = {}
+        image_deletions = self.session_store.list_image_deletion_records()
 
         for path in sorted(self.session_store.sessions_root.glob("*/session.json")):
             try:
@@ -2033,9 +2167,11 @@ class MaskIterationService:
             "meta": {
                 "exported_at": utc_now_iso(),
                 "source": "mask_iteration_webapp",
-                "deleted_count": len(deleted_targets),
+                "deleted_target_count": len(deleted_targets),
+                "deleted_image_count": len(image_deletions),
                 "annotation_file_count": len(grouped_records),
             },
+            "deleted_images": image_deletions,
             "deleted_targets": deleted_targets,
             "by_annotation_file": grouped_records,
         }

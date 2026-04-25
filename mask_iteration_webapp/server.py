@@ -134,9 +134,23 @@ def create_handler(service, static_dir: Path):
                         ),
                     )
 
+                if path.startswith("/api/sessions/") and path.endswith("/lock-region/delete"):
+                    target_key = unquote(path[len("/api/sessions/") : -len("/lock-region/delete")]).strip("/")
+                    return self._send_json(
+                        HTTPStatus.OK,
+                        service.delete_locked_region(
+                            target_key=target_key,
+                            region_id=str(payload["region_id"]),
+                        ),
+                    )
+
                 if path.startswith("/api/sessions/") and path.endswith("/delete-target"):
                     target_key = unquote(path[len("/api/sessions/") : -len("/delete-target")]).strip("/")
                     return self._send_json(HTTPStatus.OK, service.delete_target(target_key))
+
+                if path.startswith("/api/sessions/") and path.endswith("/delete-image"):
+                    target_key = unquote(path[len("/api/sessions/") : -len("/delete-image")]).strip("/")
+                    return self._send_json(HTTPStatus.OK, service.delete_image(target_key))
 
                 if path.startswith("/api/sessions/") and path.endswith("/validate-tools/validate"):
                     target_key = unquote(path[len("/api/sessions/") : -len("/validate-tools/validate")]).strip("/")

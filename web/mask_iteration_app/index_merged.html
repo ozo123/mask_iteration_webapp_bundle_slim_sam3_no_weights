@@ -17,8 +17,8 @@
       --fg: #30d07f;
       --bgpt: #ff6a59;
       --warn: #ffd38d;
-      --compare: #f0b35e;
-      --mask: #2bcbff;
+      --compare: #ff4f8f;
+      --mask: #00c2ff;
     }
     * { box-sizing: border-box; }
     body {
@@ -379,24 +379,6 @@
       border-color: rgba(255, 211, 141, 0.35);
       background: rgba(255, 211, 141, 0.14);
     }
-    .legend {
-      display: grid;
-      gap: 8px;
-      font-size: 13px;
-      color: var(--muted);
-    }
-    .legend-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .swatch {
-      width: 14px;
-      height: 14px;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,0.35);
-      display: inline-block;
-    }
     .nav-pill {
       display: inline-flex;
       align-items: center;
@@ -512,11 +494,11 @@
         </div>
         <div class="field span-2">
           <label for="maskOpacity">当前 Mask 透明度</label>
-          <input id="maskOpacity" type="range" min="0" max="1" step="0.05" value="0.45">
+          <input id="maskOpacity" type="range" min="0" max="1" step="0.05" value="0.5">
         </div>
         <div class="field span-2">
           <label for="compareOpacity">对比 Mask 透明度</label>
-          <input id="compareOpacity" type="range" min="0" max="1" step="0.05" value="0.35">
+          <input id="compareOpacity" type="range" min="0" max="1" step="0.05" value="0.45">
         </div>
         <div class="field span-2">
           <label for="variantName">导出 Variant</label>
@@ -576,6 +558,7 @@
             <button id="clearPointsBtn" type="button">清空点</button>
             <button id="clearLinesBtn" type="button">清空线</button>
             <button id="deleteTargetBtn" type="button">删除当前框</button>
+            <button id="deleteImageBtn" type="button">删除整张图</button>
             <button id="exportLegacyBtn" type="button">导出旧格式</button>
             <button id="exportSessionBtn" type="button">导出历史数据</button>
             <button id="exportDeletedBtn" type="button">导出删除记录</button>
@@ -618,20 +601,6 @@
         <div class="field span-12">
           <label>已锁定区域</label>
           <div id="lockedRegionList" class="stroke-list"></div>
-        </div>
-
-        <div class="field span-12">
-          <label>图层图例</label>
-          <div class="legend">
-            <div class="legend-item"><span class="swatch" style="background: rgba(43,203,255,0.7)"></span> 当前 Mask</div>
-            <div class="legend-item"><span class="swatch" style="background: rgba(240,179,94,0.7)"></span> 对比 Mask</div>
-            <div class="legend-item"><span class="swatch" style="background: rgba(48,208,127,0.9)"></span> 前景点</div>
-            <div class="legend-item"><span class="swatch" style="background: rgba(255,106,89,0.9)"></span> 背景点</div>
-            <div class="legend-item"><span class="swatch" style="background: rgba(48,208,127,0.55)"></span> 前景线</div>
-            <div class="legend-item"><span class="swatch" style="background: rgba(255,106,89,0.55)"></span> 背景线</div>
-            <div class="legend-item"><span class="swatch" style="background: rgba(127,227,190,0.36)"></span> 锁定区域</div>
-            <div class="legend-item"><span class="swatch" style="background: rgba(255,211,141,0.9)"></span> 初始中心点</div>
-          </div>
         </div>
 
       </div>
@@ -734,6 +703,7 @@
       clearPointsBtn: document.getElementById("clearPointsBtn"),
       clearLinesBtn: document.getElementById("clearLinesBtn"),
       deleteTargetBtn: document.getElementById("deleteTargetBtn"),
+      deleteImageBtn: document.getElementById("deleteImageBtn"),
       exportLegacyBtn: document.getElementById("exportLegacyBtn"),
       exportSessionBtn: document.getElementById("exportSessionBtn"),
       exportDeletedBtn: document.getElementById("exportDeletedBtn"),
@@ -759,8 +729,8 @@
     };
 
     const COLORS = {
-      currentMask: [43, 203, 255],
-      compareMask: [240, 179, 94],
+      currentMask: [0, 194, 255],
+      compareMask: [255, 79, 143],
       bbox: [64, 223, 133],
       promptBox: [99, 210, 255],
       fg: [48, 208, 127],
@@ -1110,6 +1080,7 @@
       el.commitRegionBtn.disabled = !hasSession || state.busy || !canCommitRegion;
       el.cancelRegionBtn.disabled = !hasSession || state.busy || !hasRegionDraft;
       el.deleteTargetBtn.disabled = !hasSession || state.busy;
+      el.deleteImageBtn.disabled = !hasSession || state.busy;
       el.exportDeletedBtn.disabled = !state.bootstrap || state.busy;
       el.validateRunBtn.disabled = !hasSession || state.busy || !validateAvailable;
     }
@@ -1741,7 +1712,10 @@
               <strong>R${index + 1}</strong>
               <span class="pill fg">locked</span>
             </div>
-            <div class="subtle">${(region.points || []).length} pts</div>
+            <div class="button-row">
+              <span class="subtle">${(region.points || []).length} pts</span>
+              <button class="small-button" data-region-delete="${escapeHtml(region.region_id)}" type="button">删除</button>
+            </div>
           </div>
         </div>
       `));
@@ -1759,6 +1733,23 @@
           resetDrawingRegion();
           updateRegionToolStatus();
           renderCanvas();
+        });
+      });
+      el.lockedRegionList.querySelectorAll("[data-region-delete]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          if (state.busy) return;
+          try {
+            setBusy("Deleting locked region...");
+            const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/lock-region/delete`, {
+              region_id: button.dataset.regionDelete,
+            });
+            applySessionPayload(payload);
+            clearBusy("Locked region deleted.");
+          } catch (error) {
+            state.busy = false;
+            renderButtons();
+            setStatus(error.message || String(error), true);
+          }
         });
       });
     }
@@ -1884,7 +1875,7 @@
         const color = fixedColor || (Number(point.label) === 1 ? COLORS.fg : COLORS.bg);
         ctx.fillStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.96)`;
         ctx.strokeStyle = "rgba(10, 14, 18, 0.95)";
-        ctx.lineWidth = 0.75;
+        ctx.lineWidth = 0.6;
         ctx.beginPath();
         ctx.arc(x, y, radius, 0, Math.PI * 2);
         ctx.fill();
@@ -1897,8 +1888,8 @@
         const points = stroke.points || [];
         if (!points.length) return;
         const color = Number(stroke.label) === 1 ? COLORS.strokeFg : COLORS.strokeBg;
-        ctx.strokeStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.78)`;
-        ctx.lineWidth = 4;
+        ctx.strokeStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.82)`;
+        ctx.lineWidth = 2;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.beginPath();
@@ -1917,7 +1908,7 @@
       if (state.drawingStroke.active && state.drawingStroke.points.length) {
         const color = state.currentLabel === 1 ? COLORS.strokeFg : COLORS.strokeBg;
         ctx.strokeStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.92)`;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 2;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.beginPath();
@@ -1951,7 +1942,7 @@
         ctx.closePath();
         ctx.fillStyle = `rgba(${COLORS.lockedRegionFill[0]}, ${COLORS.lockedRegionFill[1]}, ${COLORS.lockedRegionFill[2]}, 0.18)`;
         ctx.strokeStyle = `rgba(${COLORS.lockedRegionStroke[0]}, ${COLORS.lockedRegionStroke[1]}, ${COLORS.lockedRegionStroke[2]}, 0.92)`;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1.4;
         ctx.fill();
         ctx.stroke();
       });
@@ -1990,7 +1981,7 @@
           }
         });
         ctx.strokeStyle = `rgba(${COLORS.lockedRegionStroke[0]}, ${COLORS.lockedRegionStroke[1]}, ${COLORS.lockedRegionStroke[2]}, 0.96)`;
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = 1.8;
         ctx.lineJoin = "round";
         ctx.lineCap = "round";
         ctx.stroke();
@@ -2001,7 +1992,7 @@
           ctx.moveTo(Number(lastPoint.x) - crop.x0, Number(lastPoint.y) - crop.y0);
           ctx.lineTo(Number(hoverPoint.x) - crop.x0, Number(hoverPoint.y) - crop.y0);
           ctx.strokeStyle = `rgba(${COLORS.lockedRegionStroke[0]}, ${COLORS.lockedRegionStroke[1]}, ${COLORS.lockedRegionStroke[2]}, 0.72)`;
-          ctx.lineWidth = 2;
+          ctx.lineWidth = 1.4;
           ctx.setLineDash([8, 6]);
           ctx.stroke();
           ctx.setLineDash([]);
@@ -2014,7 +2005,7 @@
           ctx.strokeStyle = canClose
             ? "rgba(255, 211, 141, 0.96)"
             : `rgba(${COLORS.lockedRegionStroke[0]}, ${COLORS.lockedRegionStroke[1]}, ${COLORS.lockedRegionStroke[2]}, 0.4)`;
-          ctx.lineWidth = canClose ? 2.5 : 1.5;
+          ctx.lineWidth = canClose ? 1.8 : 1.1;
           ctx.setLineDash([6, 5]);
           ctx.stroke();
           ctx.setLineDash([]);
@@ -2025,12 +2016,12 @@
           const y = Number(point.y) - crop.y0;
           const isStart = index === 0;
           ctx.beginPath();
-          ctx.arc(x, y, isStart ? 5.5 : 4.2, 0, Math.PI * 2);
+          ctx.arc(x, y, isStart ? 3.8 : 3.0, 0, Math.PI * 2);
           ctx.fillStyle = isStart && canClose
             ? "rgba(255, 211, 141, 0.95)"
             : `rgba(${COLORS.lockedRegionStroke[0]}, ${COLORS.lockedRegionStroke[1]}, ${COLORS.lockedRegionStroke[2]}, 0.98)`;
           ctx.fill();
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = 1;
           ctx.strokeStyle = "rgba(9, 16, 24, 0.95)";
           ctx.stroke();
         });
@@ -2110,8 +2101,8 @@
       }
 
       if (state.showPoints) {
-        drawPoints(ctx, state.session.system_prompt_points || [], crop, COLORS.system, 2.5);
-        drawPoints(ctx, state.session.working_points || [], crop, null, 2.5);
+        drawPoints(ctx, state.session.system_prompt_points || [], crop, COLORS.system, 1.8);
+        drawPoints(ctx, state.session.working_points || [], crop, null, 1.8);
         drawLineStrokes(ctx, state.session.line_strokes || [], crop);
       }
       drawLockedRegions(ctx, state.session.locked_regions || [], crop);
@@ -2456,15 +2447,19 @@
       }
     }
 
-    function gotoRelativeTarget(offset) {
+    async function gotoRelativeTarget(offset) {
       if (!state.filteredTargets.length) return;
       const index = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
       const nextIndex = clamp(index + offset, 0, state.filteredTargets.length - 1);
+      if (index === nextIndex && state.session && state.session.session_id === state.selectedTargetKey) {
+        return;
+      }
       state.selectedTargetKey = state.filteredTargets[nextIndex].key;
       el.targetSelect.value = state.selectedTargetKey;
       const currentIndex = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
       el.targetSummary.textContent = `目标 ${currentIndex + 1} / ${state.filteredTargets.length}`;
       renderButtons();
+      await openCurrentTarget();
     }
 
     async function handleIterate() {
@@ -2565,6 +2560,36 @@
         const remainingTargets = (state.targets || []).filter((item) => item.key !== deletedKey);
         applyTargets(remainingTargets, state.targetSourceLabel);
         clearBusy("Current target deleted. Export deletion records when ready.");
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function handleDeleteImage() {
+      if (!state.session) return;
+      const target = state.session.target;
+      const sameImageCount = (state.targets || [])
+        .filter((item) => item.image_file_name === target.image_file_name && item.import_id === target.import_id)
+        .length;
+      const ok = window.confirm(`删除整张图及其所有目标框？\n${target.image_file_name}\n当前列表中匹配 ${sameImageCount || 1} 个目标。`);
+      if (!ok) return;
+      try {
+        setBusy("Deleting current image...");
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/delete-image`, {});
+        const deletedKeys = new Set(payload.deleted_target_keys || []);
+        if (payload.bootstrap) {
+          state.bootstrap = payload.bootstrap;
+        }
+        const remainingTargets = (state.targets || []).filter((item) => !deletedKeys.has(item.key));
+        state.session = null;
+        state.validateSession = null;
+        state.compareHistoryId = null;
+        state.image = null;
+        applyTargets(remainingTargets, state.targetSourceLabel);
+        renderAll();
+        clearBusy(`Current image deleted with ${payload.deleted_target_count || deletedKeys.size} target records.`);
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -2874,8 +2899,8 @@
         }
         renderButtons();
       });
-      el.prevTargetBtn.addEventListener("click", () => gotoRelativeTarget(-1));
-      el.nextTargetBtn.addEventListener("click", () => gotoRelativeTarget(1));
+      el.prevTargetBtn.addEventListener("click", () => { void gotoRelativeTarget(-1); });
+      el.nextTargetBtn.addEventListener("click", () => { void gotoRelativeTarget(1); });
       el.openSessionBtn.addEventListener("click", openCurrentTarget);
       el.contextPad.addEventListener("input", () => {
         state.autoFitPending = true;
@@ -2925,6 +2950,7 @@
       el.clearPointsBtn.addEventListener("click", handleClearPoints);
       el.clearLinesBtn.addEventListener("click", handleClearLines);
       el.deleteTargetBtn.addEventListener("click", handleDeleteTarget);
+      el.deleteImageBtn.addEventListener("click", handleDeleteImage);
       el.exportLegacyBtn.addEventListener("click", () => downloadExport("legacy"));
       el.exportSessionBtn.addEventListener("click", () => downloadExport("session"));
       el.exportDeletedBtn.addEventListener("click", downloadDeletionExport);
