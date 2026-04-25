@@ -46,32 +46,133 @@ class SessionStore:
         self.sessions_root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
 
+    def target_index_path(self) -> Path:
+        return self.sessions_root / "target_session_index.json"
+
+    def _load_target_index(self) -> dict[str, str]:
+        path = self.target_index_path()
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        entries = payload.get("targets") or {}
+        if not isinstance(entries, dict):
+            return {}
+        return {str(key): str(value) for key, value in entries.items()}
+
+    def _save_target_index_entry(self, target_key: str, session_dir: Path) -> None:
+        path = self.target_index_path()
+        with self._lock:
+            entries = self._load_target_index()
+            entries[target_key] = str(session_dir.resolve().relative_to(self.sessions_root.resolve()))
+            path.write_text(
+                json.dumps({"schema_version": 1, "targets": entries}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+    def _session_dir_for_target(self, target: TargetRecord) -> Path:
+        dataset_session = sanitize_component(target.import_id or "legacy_session")
+        category = sanitize_component(target.category_name or "object")
+        return self.sessions_root / dataset_session / category / sanitize_component(target.key)
+
     def session_dir(self, target_key: str) -> Path:
+        entries = self._load_target_index()
+        relpath = entries.get(target_key)
+        if relpath:
+            candidate = (self.sessions_root / relpath).resolve()
+            if candidate.exists():
+                return candidate
+        matches = sorted(self.sessions_root.rglob(sanitize_component(target_key)))
+        for candidate in matches:
+            if candidate.is_dir() and (candidate / "session.json").exists():
+                return candidate
         return self.sessions_root / sanitize_component(target_key)
 
     def session_json_path(self, target_key: str) -> Path:
         return self.session_dir(target_key) / "session.json"
 
+    def session_meta_path(self, target_key: str) -> Path:
+        return self.session_dir(target_key) / "session_meta.json"
+
     def image_deletions_path(self) -> Path:
         return self.sessions_root / "image_deletions.json"
+
+    def target_deletions_path(self) -> Path:
+        return self.sessions_root / "target_deletions.json"
 
     def load_session(self, target_key: str) -> SessionState | None:
         path = self.session_json_path(target_key)
         if not path.exists():
             return None
         payload = json.loads(path.read_text(encoding="utf-8"))
+        self._hydrate_external_mask_rles(target_key, payload)
         return SessionState.from_dict(payload)
 
     def save_session(self, session: SessionState) -> None:
-        path = self.session_json_path(session.session_id)
+        session_dir = self._session_dir_for_target(session.target)
+        self._save_target_index_entry(session.session_id, session_dir)
+        path = session_dir / "session.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            path.write_text(json.dumps(session.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            path.write_text(
+                json.dumps(self._compact_session_payload(session), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            (session_dir / "session_meta.json").write_text(
+                json.dumps(self._session_meta_payload(session), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+    def _mask_rle_relpath(self, history_id: str) -> str:
+        return str(Path("artifacts") / "masks" / f"{sanitize_component(history_id)}.json").replace("\\", "/")
+
+    def _compact_session_payload(self, session: SessionState) -> dict[str, Any]:
+        payload = session.to_dict()
+        session_dir = self._session_dir_for_target(session.target)
+        for history_payload in payload.get("history", []) or []:
+            mask_rle = history_payload.get("mask_rle")
+            history_id = str(history_payload.get("history_id") or "")
+            if not history_id or not mask_rle:
+                continue
+            relpath = str(history_payload.get("mask_rle_relpath") or self._mask_rle_relpath(history_id))
+            output_path = session_dir / relpath
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(mask_rle, ensure_ascii=False), encoding="utf-8")
+            history_payload["mask_rle_relpath"] = relpath
+            history_payload["mask_rle"] = None
+        return payload
+
+    def _hydrate_external_mask_rles(self, target_key: str, payload: dict[str, Any]) -> None:
+        session_dir = self.session_dir(target_key)
+        for history_payload in payload.get("history", []) or []:
+            if history_payload.get("mask_rle"):
+                continue
+            relpath = history_payload.get("mask_rle_relpath")
+            if not relpath:
+                continue
+            mask_path = session_dir / str(relpath)
+            if mask_path.exists():
+                history_payload["mask_rle"] = json.loads(mask_path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _session_meta_payload(session: SessionState) -> dict[str, Any]:
+        return {
+            "schema_version": session.schema_version,
+            "session_id": session.session_id,
+            "updated_at": session.updated_at,
+            "history_count": len(session.history),
+            "current_history_id": session.current_history_id,
+            "is_deleted": bool(session.is_deleted),
+            "deleted_at": session.deleted_at,
+            "target": session.target.to_dict(),
+        }
 
     def save_logits(self, session: SessionState, history_id: str, logits: Any) -> str:
         np = importlib.import_module("numpy")
         relpath = Path("artifacts") / "logits" / f"{sanitize_component(history_id)}.npy"
-        output_path = self.session_dir(session.session_id) / relpath
+        output_path = self._session_dir_for_target(session.target) / relpath
         output_path.parent.mkdir(parents=True, exist_ok=True)
         np.save(output_path, logits)
         return str(relpath).replace("\\", "/")
@@ -84,7 +185,16 @@ class SessionStore:
         return np.load(logits_path, allow_pickle=False)
 
     def write_export(self, session: SessionState, export_name: str, payload: dict[str, Any]) -> Path:
-        export_dir = self.session_dir(session.session_id) / "exports"
+        export_dir = self._session_dir_for_target(session.target) / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        output_path = export_dir / export_name
+        output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return output_path
+
+    def write_category_export(self, export_name: str, payload: dict[str, Any]) -> Path:
+        dataset_session = sanitize_component(str((payload.get("meta") or {}).get("dataset_session") or "category_exports"))
+        category = sanitize_component(str(payload.get("category_name") or "category"))
+        export_dir = self.sessions_root / dataset_session / category / "category_exports"
         export_dir.mkdir(parents=True, exist_ok=True)
         output_path = export_dir / export_name
         output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -110,15 +220,53 @@ class SessionStore:
                 payload["records"].append(record)
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def list_target_deletion_records(self) -> list[dict[str, Any]]:
+        path = self.target_deletions_path()
+        if not path.exists():
+            return []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        records = payload.get("records") or []
+        return [record for record in records if isinstance(record, dict)]
+
+    def add_target_deletion_record(self, record: dict[str, Any]) -> None:
+        path = self.target_deletions_path()
+        with self._lock:
+            payload = {"schema_version": 1, "records": self.list_target_deletion_records()}
+            target_key = str(record.get("target_key") or "")
+            existing_keys = {str(item.get("target_key") or "") for item in payload["records"]}
+            if target_key not in existing_keys:
+                payload["records"].append(record)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
     def list_session_meta(self) -> dict[str, dict[str, Any]]:
         results: dict[str, dict[str, Any]] = {}
-        for path in self.sessions_root.glob("*/session.json"):
+        for path in self.sessions_root.rglob("session_meta.json"):
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 continue
             target_key = str(payload.get("session_id", "")).strip()
             if not target_key:
+                continue
+            results[target_key] = {
+                "has_session": True,
+                "updated_at": payload.get("updated_at"),
+                "history_count": int(payload.get("history_count", 0)),
+                "current_history_id": payload.get("current_history_id"),
+                "is_deleted": bool(payload.get("is_deleted", False)),
+                "deleted_at": payload.get("deleted_at"),
+                "target": payload.get("target"),
+            }
+        for path in self.sessions_root.rglob("session.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            target_key = str(payload.get("session_id", path.parent.name)).strip()
+            if target_key in results:
                 continue
             history = payload.get("history") or []
             results[target_key] = {
@@ -128,6 +276,7 @@ class SessionStore:
                 "current_history_id": payload.get("current_history_id"),
                 "is_deleted": bool(payload.get("is_deleted", False)),
                 "deleted_at": payload.get("deleted_at"),
+                "target": payload.get("target"),
             }
         return results
 
@@ -174,6 +323,8 @@ class UploadedTargetStore:
         image_data_url: str,
         annotation_file_name: str,
         annotation_text: str,
+        import_session_id: str | None = None,
+        import_session_label: str | None = None,
     ) -> dict[str, Any]:
         image_file_name = Path(image_file_name or "uploaded_image").name
         annotation_file_name = Path(annotation_file_name or "annotation.json").name
@@ -187,14 +338,15 @@ class UploadedTargetStore:
             raise ValueError("Annotation JSON must be an object.")
 
         imported_at = utc_now_iso()
-        import_id = f"upload_{uuid4().hex[:12]}"
+        import_id = sanitize_component(str(import_session_id or "").strip()) or f"upload_{uuid4().hex[:12]}"
         import_dir = self.imports_root / import_id
         source_dir = import_dir / "source"
         source_dir.mkdir(parents=True, exist_ok=True)
+        source_key = sanitize_component(Path(annotation_file_name).stem or Path(image_file_name).stem or uuid4().hex)
 
         image_suffix = Path(image_file_name).suffix or ".png"
-        image_path = source_dir / f"image{image_suffix}"
-        annotation_path = source_dir / annotation_file_name
+        image_path = source_dir / f"{source_key}__image{image_suffix}"
+        annotation_path = source_dir / f"{source_key}__{sanitize_component(annotation_file_name)}"
         image_path.write_bytes(image_bytes)
         annotation_path.write_text(annotation_text, encoding="utf-8")
 
@@ -211,21 +363,55 @@ class UploadedTargetStore:
             actual_height=actual_height,
             import_id=import_id,
             imported_at=imported_at,
+            source_key=source_key,
         )
         if not targets:
             raise ValueError("No rectanglelabels targets were found in the uploaded annotation JSON.")
 
+        manifest_path = import_dir / "manifest.json"
+        existing_payload: dict[str, Any] = {}
+        existing_targets: list[dict[str, Any]] = []
+        source_files: list[dict[str, Any]] = []
+        if manifest_path.exists():
+            try:
+                existing_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except Exception:
+                existing_payload = {}
+            existing_targets = [
+                item for item in existing_payload.get("targets", []) if isinstance(item, dict)
+            ]
+            source_files = [
+                item for item in existing_payload.get("source_files", []) if isinstance(item, dict)
+            ]
+
+        target_payloads_by_key = {str(item.get("key") or ""): item for item in existing_targets}
+        for target in targets:
+            target_payloads_by_key[target.key] = target.to_dict()
+        source_files.append(
+            {
+                "source_key": source_key,
+                "image_file_name": image_file_name,
+                "image_path": str(image_path.resolve()),
+                "annotation_file_name": annotation_file_name,
+                "annotation_json_path": str(annotation_path.resolve()),
+                "imported_at": imported_at,
+            }
+        )
+
         manifest_payload = {
             "schema_version": 1,
             "import_id": import_id,
-            "imported_at": imported_at,
+            "import_session_label": str(import_session_label or import_id),
+            "imported_at": existing_payload.get("imported_at") or imported_at,
+            "updated_at": imported_at,
             "image_file_name": image_file_name,
             "image_path": str(image_path.resolve()),
             "annotation_file_name": annotation_file_name,
             "annotation_json_path": str(annotation_path.resolve()),
-            "targets": [target.to_dict() for target in targets],
+            "source_files": source_files,
+            "targets": list(target_payloads_by_key.values()),
         }
-        (import_dir / "manifest.json").write_text(
+        manifest_path.write_text(
             json.dumps(manifest_payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -233,7 +419,9 @@ class UploadedTargetStore:
         with self._lock:
             self._register_manifest_payload(manifest_payload)
 
-        return manifest_payload
+        response_payload = dict(manifest_payload)
+        response_payload["targets"] = [target.to_dict() for target in targets]
+        return response_payload
 
     def _load_existing_manifests(self) -> None:
         for manifest_path in sorted(self.imports_root.glob("*/manifest.json"), reverse=True):
@@ -280,6 +468,7 @@ class UploadedTargetStore:
         actual_height: int,
         import_id: str,
         imported_at: str,
+        source_key: str = "",
     ) -> list[TargetRecord]:
         targets: list[TargetRecord] = []
         seen_keys: set[str] = set()
@@ -304,7 +493,9 @@ class UploadedTargetStore:
             w = float(value["width"]) * image_width / 100.0
             h = float(value["height"]) * image_height / 100.0
             annotation_id = str(result.get("id", f"result_{result_index}"))
-            key = sanitize_component(f"upload__{import_id}__{category_name}__{annotation_id}__{result_index}")
+            key = sanitize_component(
+                f"upload__{import_id}__{source_key or 'source'}__{category_name}__{annotation_id}__{result_index}"
+            )
             if key in seen_keys:
                 key = sanitize_component(f"{key}__dup_{result_index}")
             seen_keys.add(key)
@@ -1678,12 +1869,16 @@ class MaskIterationService:
         image_data_url: str,
         annotation_file_name: str,
         annotation_text: str,
+        import_session_id: str | None = None,
+        import_session_label: str | None = None,
     ) -> dict[str, Any]:
         manifest = self.target_store.import_bundle(
             image_file_name=image_file_name,
             image_data_url=image_data_url,
             annotation_file_name=annotation_file_name,
             annotation_text=annotation_text,
+            import_session_id=import_session_id,
+            import_session_label=import_session_label,
         )
         session_meta = self.session_store.list_session_meta()
         targets = [
@@ -1693,6 +1888,7 @@ class MaskIterationService:
         return {
             "import_id": manifest["import_id"],
             "imported_at": manifest["imported_at"],
+            "import_session_label": manifest.get("import_session_label"),
             "image_file_name": manifest["image_file_name"],
             "annotation_file_name": manifest["annotation_file_name"],
             "targets": targets,
@@ -1900,6 +2096,29 @@ class MaskIterationService:
             session.deleted_at = deleted_at
             session.updated_at = deleted_at
             self.session_store.save_session(session)
+            target = session.target
+            self.session_store.add_target_deletion_record(
+                {
+                    "deletion_id": f"target_delete_{uuid4().hex[:12]}",
+                    "scope": "target",
+                    "deleted_at": deleted_at,
+                    "source": "mask_iteration_webapp",
+                    "session_id": session.session_id,
+                    "target_key": target.key,
+                    "annotation_id": target.annotation_id,
+                    "source_annotation_id": target.source_annotation_id,
+                    "result_index": target.result_index,
+                    "category_id": target.category_id,
+                    "category_name": target.category_name,
+                    "image_file_name": target.image_file_name,
+                    "annotation_file_name": target.annotation_file_name,
+                    "annotation_json_path": target.annotation_json_path,
+                    "import_id": target.import_id,
+                    "imported_at": target.imported_at,
+                    "bbox_xywh": target.bbox_xywh,
+                    "bbox_xyxy": target.bbox_xyxy,
+                }
+            )
             return {
                 "ok": True,
                 "deleted_target_key": target_key,
@@ -2091,23 +2310,85 @@ class MaskIterationService:
         self.session_store.write_export(session, export_name, payload)
         return payload, export_name
 
+    def export_category_payload(
+        self,
+        category_name: str,
+        target_keys: Any,
+        source_label: str | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        category = str(category_name or "").strip()
+        if not category:
+            raise ValueError("Category name is required.")
+        if not isinstance(target_keys, list) or not target_keys:
+            raise ValueError("target_keys must be a non-empty list.")
+
+        sessions: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        dataset_sessions: set[str] = set()
+        for raw_key in target_keys:
+            target_key = str(raw_key or "").strip()
+            if not target_key or target_key in seen:
+                continue
+            seen.add(target_key)
+            session = self.session_store.load_session(target_key)
+            if session is None:
+                skipped.append({"target_key": target_key, "reason": "missing_session"})
+                continue
+            if session.target.category_name != category:
+                skipped.append(
+                    {
+                        "target_key": target_key,
+                        "reason": "category_mismatch",
+                        "category_name": session.target.category_name,
+                    }
+                )
+                continue
+            if session.target.import_id:
+                dataset_sessions.add(session.target.import_id)
+            sessions.append(session.to_dict())
+
+        dataset_session = next(iter(dataset_sessions)) if len(dataset_sessions) == 1 else "mixed_sessions"
+
+        payload = {
+            "meta": {
+                "exported_at": utc_now_iso(),
+                "source": "mask_iteration_webapp",
+                "source_label": source_label or None,
+                "dataset_session": dataset_session,
+                "category_name": category,
+                "requested_target_count": len(seen),
+                "exported_session_count": len(sessions),
+                "skipped_count": len(skipped),
+            },
+            "category_name": category,
+            "target_keys": list(seen),
+            "skipped": skipped,
+            "sessions": sessions,
+        }
+        export_name = f"category__{sanitize_component(category)}__{sanitize_component(utc_now_iso())}.json"
+        self.session_store.write_category_export(export_name, payload)
+        return payload, export_name
+
     def export_deleted_targets_payload(self) -> tuple[dict[str, Any], str]:
-        deleted_targets: list[dict[str, Any]] = []
+        deleted_targets: list[dict[str, Any]] = self.session_store.list_target_deletion_records()
+        deleted_target_keys = {str(item.get("target_key") or "") for item in deleted_targets}
         grouped: dict[str, dict[str, Any]] = {}
         image_deletions = self.session_store.list_image_deletion_records()
 
-        for path in sorted(self.session_store.sessions_root.glob("*/session.json")):
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-                session = SessionState.from_dict(payload)
-            except Exception:
+        for target_key, meta in self.session_store.list_session_meta().items():
+            if not bool(meta.get("is_deleted", False)) or target_key in deleted_target_keys:
                 continue
-            if not session.is_deleted:
+            target_payload = meta.get("target") or {}
+            if not target_payload:
                 continue
+            target = TargetRecord.from_dict(target_payload)
 
-            target = session.target
             record = {
-                "session_id": session.session_id,
+                "deletion_id": f"legacy_target_delete_{sanitize_component(target.key)}",
+                "scope": "target",
+                "source": "mask_iteration_webapp",
+                "session_id": target_key,
                 "target_key": target.key,
                 "annotation_id": target.annotation_id,
                 "source_annotation_id": target.source_annotation_id,
@@ -2119,19 +2400,23 @@ class MaskIterationService:
                 "annotation_json_path": target.annotation_json_path,
                 "import_id": target.import_id,
                 "imported_at": target.imported_at,
-                "deleted_at": session.deleted_at,
+                "deleted_at": meta.get("deleted_at"),
                 "bbox_xywh": target.bbox_xywh,
                 "bbox_xyxy": target.bbox_xyxy,
             }
             deleted_targets.append(record)
+            deleted_target_keys.add(target.key)
 
-            group_key = target.annotation_json_path
+        for record in deleted_targets:
+            annotation_file_name = str(record.get("annotation_file_name") or "")
+            annotation_json_path = str(record.get("annotation_json_path") or "")
+            image_file_name = str(record.get("image_file_name") or "")
             group = grouped.setdefault(
-                group_key,
+                annotation_json_path,
                 {
-                    "annotation_file_name": target.annotation_file_name,
-                    "annotation_json_path": target.annotation_json_path,
-                    "image_file_name": target.image_file_name,
+                    "annotation_file_name": annotation_file_name,
+                    "annotation_json_path": annotation_json_path,
+                    "image_file_name": image_file_name,
                     "deleted_count": 0,
                     "delete_result_indices": [],
                     "delete_annotation_ids": [],
@@ -2139,8 +2424,8 @@ class MaskIterationService:
                 },
             )
             group["deleted_count"] += 1
-            group["delete_result_indices"].append(target.result_index)
-            group["delete_annotation_ids"].append(target.annotation_id)
+            group["delete_result_indices"].append(record.get("result_index"))
+            group["delete_annotation_ids"].append(record.get("annotation_id"))
             group["deleted_targets"].append(record)
 
         deleted_targets.sort(
@@ -2153,8 +2438,13 @@ class MaskIterationService:
         )
         grouped_records = []
         for entry in grouped.values():
-            entry["delete_result_indices"] = sorted({int(value) for value in entry["delete_result_indices"]}, reverse=True)
-            entry["delete_annotation_ids"] = sorted({str(value) for value in entry["delete_annotation_ids"]})
+            entry["delete_result_indices"] = sorted(
+                {int(value) for value in entry["delete_result_indices"] if value is not None},
+                reverse=True,
+            )
+            entry["delete_annotation_ids"] = sorted(
+                {str(value) for value in entry["delete_annotation_ids"] if value is not None}
+            )
             entry["deleted_targets"] = sorted(
                 entry["deleted_targets"],
                 key=lambda item: int(item.get("result_index") or 0),
@@ -2169,6 +2459,11 @@ class MaskIterationService:
                 "source": "mask_iteration_webapp",
                 "deleted_target_count": len(deleted_targets),
                 "deleted_image_count": len(image_deletions),
+                "deleted_image_target_count": sum(
+                    int(record.get("target_count") or 0) for record in image_deletions
+                ),
+                "total_deleted_target_count": len(deleted_targets)
+                + sum(int(record.get("target_count") or 0) for record in image_deletions),
                 "annotation_file_count": len(grouped_records),
             },
             "deleted_images": image_deletions,

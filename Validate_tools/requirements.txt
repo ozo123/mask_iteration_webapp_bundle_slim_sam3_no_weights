@@ -1,10 +1,10 @@
 # 数据集标注验证工具依赖
 
-# API调用
-openai>=1.0.0
-aiohttp>=3.8.0
+# API 调用
+openai>=1.30
+aiohttp>=3.9
 
 # 图像处理
-opencv-python>=4.8.0
-Pillow>=10.0.0
-numpy>=1.24.0
+numpy>=1.26,<2
+Pillow>=10.0
+opencv-python>=4.8

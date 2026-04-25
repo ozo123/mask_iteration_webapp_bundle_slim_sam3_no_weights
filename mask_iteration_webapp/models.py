@@ -162,6 +162,7 @@ class HistoryRecord:
     text_prompt: str = ""
     used_mask_prompt: bool = False
     mask_logits_relpath: str | None = None
+    mask_rle_relpath: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -180,7 +181,7 @@ class HistoryRecord:
             kind=str(payload["kind"]),
             created_at=str(payload["created_at"]),
             score=payload.get("score"),
-            mask_rle=payload["mask_rle"],
+            mask_rle=payload.get("mask_rle") or {},
             mask_area=int(payload.get("mask_area", 0)),
             mask_bbox_xywh=payload.get("mask_bbox_xywh"),
             prompt_box_xyxy=[float(value) for value in payload["prompt_box_xyxy"]],
@@ -199,6 +200,7 @@ class HistoryRecord:
             text_prompt=str(payload.get("text_prompt", "") or ""),
             used_mask_prompt=bool(payload.get("used_mask_prompt", False)),
             mask_logits_relpath=payload.get("mask_logits_relpath"),
+            mask_rle_relpath=payload.get("mask_rle_relpath"),
         )
 
 

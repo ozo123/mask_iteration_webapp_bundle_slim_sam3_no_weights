@@ -781,6 +781,7 @@
         points: [],
         hoverPoint: null,
       },
+      categoryExportPrompted: new Set(),
     };
 
     function clamp(value, min, max) {
@@ -1007,6 +1008,7 @@
     function applyTargets(targets, sourceLabel) {
       state.targets = Array.isArray(targets) ? targets.slice() : [];
       state.targetSourceLabel = sourceLabel || "最近导入";
+      state.categoryExportPrompted.clear();
       if (!state.targets.length) {
         state.selectedTargetKey = "";
       } else if (!state.targets.some((item) => item.key === state.selectedTargetKey)) {
@@ -2123,6 +2125,114 @@
       renderValidateSection();
     }
 
+    function clearActiveSessionForMemory(message) {
+      state.session = null;
+      state.validateSession = null;
+      state.compareHistoryId = null;
+      state.image = null;
+      state.maskCache.clear();
+      state.drawingStroke.active = false;
+      state.drawingStroke.points = [];
+      resetDrawingRegion();
+      el.textPromptInput.value = "";
+      renderAll();
+      if (message) {
+        setStatus(message);
+      }
+    }
+
+    function markCurrentTargetProcessed(session) {
+      if (!session || !session.session_id) return;
+      state.targets = state.targets.map((target) => {
+        if (target.key !== session.session_id) return target;
+        return {
+          ...target,
+          has_session: true,
+          history_count: (session.history || []).length,
+          updated_at: session.updated_at,
+          current_history_id: session.current_history_id,
+        };
+      });
+      state.filteredTargets = state.filteredTargets.map((target) => {
+        if (target.key !== session.session_id) return target;
+        return {
+          ...target,
+          has_session: true,
+          history_count: (session.history || []).length,
+          updated_at: session.updated_at,
+          current_history_id: session.current_history_id,
+        };
+      });
+    }
+
+    function categoryExportKey(categoryName) {
+      return `${state.targetSourceLabel}::${categoryName}`;
+    }
+
+    function categoryTargets(categoryName) {
+      return (state.targets || []).filter((target) => target.category_name === categoryName);
+    }
+
+    function isCategoryComplete(categoryName) {
+      const targets = categoryTargets(categoryName);
+      return Boolean(targets.length) && targets.every((target) => Number(target.history_count || 0) > 1);
+    }
+
+    async function exportCompletedCategory(categoryName, targets) {
+      const response = await fetch("/api/categories/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          category_name: categoryName,
+          target_keys: targets.map((target) => target.key),
+          source_label: state.targetSourceLabel,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafely(response);
+        throw new Error(payload.error || "Category export failed");
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      const fileName = match ? match[1] : `category_${categoryName}.json`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      return fileName;
+    }
+
+    function maybePromptCategoryExport(session) {
+      if (!session || !session.target) return;
+      const categoryName = session.target.category_name;
+      const key = categoryExportKey(categoryName);
+      if (!categoryName || state.categoryExportPrompted.has(key) || !isCategoryComplete(categoryName)) {
+        return;
+      }
+      state.categoryExportPrompted.add(key);
+      window.setTimeout(async () => {
+        const targets = categoryTargets(categoryName);
+        const ok = window.confirm(`类别「${categoryName}」的 ${targets.length} 个标注都已生成迭代记录。是否现在导出这一类别的所有数据？`);
+        if (!ok) return;
+        try {
+          setBusy(`Exporting category ${categoryName}...`);
+          const fileName = await exportCompletedCategory(categoryName, targets);
+          state.busy = false;
+          clearActiveSessionForMemory(`Exported ${fileName}. Current session cache cleared.`);
+        } catch (error) {
+          state.busy = false;
+          renderButtons();
+          setStatus(error.message || String(error), true);
+        }
+      }, 0);
+    }
+
     async function loadBootstrap() {
       setBusy("Loading recent targets...");
       try {
@@ -2142,6 +2252,7 @@
       state.session = payload.session;
       state.validateSession = payload.validate_tools || state.validateSession;
       ensureSessionPromptState(state.session);
+      markCurrentTargetProcessed(state.session);
       state.maskCache.clear();
       resetDrawingRegion();
       state.drawingStroke.active = false;
@@ -2153,6 +2264,7 @@
       el.notesInput.value = state.session.notes || "";
       el.textPromptInput.value = state.session.text_prompt || "";
       renderAll();
+      maybePromptCategoryExport(state.session);
     }
 
     function loadImageForTarget(targetKey) {
@@ -2209,6 +2321,25 @@
       if (!files.length) return "";
       const relativePath = normalizeRelativePath(files[0].webkitRelativePath || files[0].name);
       return relativePath.split("/").filter(Boolean)[0] || "";
+    }
+
+    function sanitizeSessionComponent(text) {
+      return String(text || "dataset")
+        .trim()
+        .replace(/[^\w\u4e00-\u9fff.-]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 96) || "dataset";
+    }
+
+    function makeImportSessionId(folderLabel) {
+      const now = new Date();
+      const pad = (value) => String(value).padStart(2, "0");
+      const stamp = [
+        now.getFullYear(),
+        pad(now.getMonth() + 1),
+        pad(now.getDate()),
+      ].join("") + "_" + [pad(now.getHours()), pad(now.getMinutes()), pad(now.getSeconds())].join("");
+      return `${sanitizeSessionComponent(folderLabel)}_${stamp}_session`;
     }
 
     function buildImageFileIndex(files) {
@@ -2285,6 +2416,8 @@
         const skipped = [];
         const imageFolderLabel = getSelectedFolderLabel(imageFiles) || "图片文件夹";
         const annotationFolderLabel = getSelectedFolderLabel(annotationFiles) || "标注文件夹";
+        const importSessionId = makeImportSessionId(imageFolderLabel);
+        const importSessionLabel = `${imageFolderLabel}_${importSessionId.split("_").slice(-3).join("_")}`;
 
         for (let index = 0; index < annotationFiles.length; index += 1) {
           const annotationFile = annotationFiles[index];
@@ -2309,6 +2442,8 @@
             image_data_url: imageDataUrl,
             annotation_file_name: annotationFile.name,
             annotation_text: annotationText,
+            import_session_id: importSessionId,
+            import_session_label: importSessionLabel,
           });
           importedTargets.push(...(payload.targets || []));
         }
@@ -2357,6 +2492,8 @@
         const failed = [];
         const imageFolderLabel = getSelectedFolderLabel(imageFiles) || "图片文件夹";
         const annotationFolderLabel = getSelectedFolderLabel(annotationFiles) || "标注文件夹";
+        const importSessionId = makeImportSessionId(imageFolderLabel);
+        const importSessionLabel = `${imageFolderLabel}_${importSessionId.split("_").slice(-3).join("_")}`;
 
         for (let index = 0; index < annotationFiles.length; index += 1) {
           const annotationFile = annotationFiles[index];
@@ -2383,6 +2520,8 @@
               image_data_url: imageDataUrl,
               annotation_file_name: annotationFile.name,
               annotation_text: annotationText,
+              import_session_id: importSessionId,
+              import_session_label: importSessionLabel,
             });
             importedTargets.push(...(payload.targets || []));
           } catch (error) {

@@ -79,12 +79,26 @@ def create_handler(service, static_dir: Path):
                             image_data_url=str(payload.get("image_data_url", "")),
                             annotation_file_name=str(payload.get("annotation_file_name", "")),
                             annotation_text=str(payload.get("annotation_text", "")),
+                            import_session_id=payload.get("import_session_id"),
+                            import_session_label=payload.get("import_session_label"),
                         ),
                     )
 
                 if path == "/api/open-session":
                     target_key = str(payload.get("target_key", "")).strip()
                     return self._send_json(HTTPStatus.OK, service.open_session(target_key))
+
+                if path == "/api/categories/export":
+                    category_payload, file_name = service.export_category_payload(
+                        category_name=str(payload.get("category_name", "")),
+                        target_keys=payload.get("target_keys"),
+                        source_label=payload.get("source_label"),
+                    )
+                    return self._send_json(
+                        HTTPStatus.OK,
+                        category_payload,
+                        extra_headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+                    )
 
                 if path.startswith("/api/sessions/") and path.endswith("/points"):
                     target_key = unquote(path[len("/api/sessions/") : -len("/points")]).strip("/")
