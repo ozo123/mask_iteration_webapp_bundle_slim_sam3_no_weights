@@ -2371,6 +2371,16 @@
         candidates.push(stripRootFolder(imageFileName));
         candidates.push(getBaseName(imageFileName));
       }
+      const cocoImages = annotationPayload && Array.isArray(annotationPayload.images)
+        ? annotationPayload.images
+        : [];
+      cocoImages.forEach((image) => {
+        const fileName = normalizeRelativePath(image && image.file_name);
+        if (!fileName) return;
+        candidates.push(fileName);
+        candidates.push(stripRootFolder(fileName));
+        candidates.push(getBaseName(fileName));
+      });
       const annotationRelative = normalizeRelativePath(annotationFile.webkitRelativePath || annotationFile.name);
       const annotationBase = getBaseName(annotationRelative).replace(/\.json$/i, "");
       if (annotationBase) {

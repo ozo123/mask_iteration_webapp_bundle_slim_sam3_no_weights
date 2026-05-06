@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -40,6 +41,15 @@ VALIDATE_REVIEW_MODE_CROP_BOX2X = "crop_box2x"
 DEFAULT_VALIDATE_REVIEW_MODE = VALIDATE_REVIEW_MODE_CROP_BOX2X
 
 
+def compact_path_component(text: str, max_length: int = 48) -> str:
+    cleaned = sanitize_component(text)
+    if len(cleaned) <= max_length:
+        return cleaned
+    digest = hashlib.sha1(cleaned.encode("utf-8")).hexdigest()[:10]
+    head_length = max(8, max_length - len(digest) - 1)
+    return f"{cleaned[:head_length]}_{digest}"
+
+
 class SessionStore:
     def __init__(self, sessions_root: Path):
         self.sessions_root = sessions_root
@@ -73,9 +83,10 @@ class SessionStore:
             )
 
     def _session_dir_for_target(self, target: TargetRecord) -> Path:
-        dataset_session = sanitize_component(target.import_id or "legacy_session")
-        category = sanitize_component(target.category_name or "object")
-        return self.sessions_root / dataset_session / category / sanitize_component(target.key)
+        dataset_session = compact_path_component(target.import_id or "legacy_session", max_length=40)
+        category = compact_path_component(target.category_name or "object", max_length=32)
+        target_dir = compact_path_component(target.key, max_length=48)
+        return self.sessions_root / dataset_session / category / target_dir
 
     def session_dir(self, target_key: str) -> Path:
         entries = self._load_target_index()
@@ -84,11 +95,16 @@ class SessionStore:
             candidate = (self.sessions_root / relpath).resolve()
             if candidate.exists():
                 return candidate
-        matches = sorted(self.sessions_root.rglob(sanitize_component(target_key)))
-        for candidate in matches:
-            if candidate.is_dir() and (candidate / "session.json").exists():
-                return candidate
-        return self.sessions_root / sanitize_component(target_key)
+        candidate_names = [
+            sanitize_component(target_key),
+            compact_path_component(target_key, max_length=48),
+        ]
+        for candidate_name in dict.fromkeys(candidate_names):
+            matches = sorted(self.sessions_root.rglob(candidate_name))
+            for candidate in matches:
+                if candidate.is_dir() and (candidate / "session.json").exists():
+                    return candidate
+        return self.sessions_root / compact_path_component(target_key, max_length=48)
 
     def session_json_path(self, target_key: str) -> Path:
         return self.session_dir(target_key) / "session.json"
@@ -192,8 +208,11 @@ class SessionStore:
         return output_path
 
     def write_category_export(self, export_name: str, payload: dict[str, Any]) -> Path:
-        dataset_session = sanitize_component(str((payload.get("meta") or {}).get("dataset_session") or "category_exports"))
-        category = sanitize_component(str(payload.get("category_name") or "category"))
+        dataset_session = compact_path_component(
+            str((payload.get("meta") or {}).get("dataset_session") or "category_exports"),
+            max_length=40,
+        )
+        category = compact_path_component(str(payload.get("category_name") or "category"), max_length=32)
         export_dir = self.sessions_root / dataset_session / category / "category_exports"
         export_dir.mkdir(parents=True, exist_ok=True)
         output_path = export_dir / export_name
@@ -366,7 +385,7 @@ class UploadedTargetStore:
             source_key=source_key,
         )
         if not targets:
-            raise ValueError("No rectanglelabels targets were found in the uploaded annotation JSON.")
+            raise ValueError("No rectanglelabels or COCO bbox targets were found in the uploaded annotation JSON.")
 
         manifest_path = import_dir / "manifest.json"
         existing_payload: dict[str, Any] = {}
@@ -470,6 +489,20 @@ class UploadedTargetStore:
         imported_at: str,
         source_key: str = "",
     ) -> list[TargetRecord]:
+        if isinstance(annotation_payload.get("annotations"), list) and isinstance(annotation_payload.get("images"), list):
+            return self._build_coco_targets(
+                annotation_payload=annotation_payload,
+                annotation_file_name=annotation_file_name,
+                annotation_path=annotation_path,
+                image_file_name=image_file_name,
+                image_path=image_path,
+                actual_width=actual_width,
+                actual_height=actual_height,
+                import_id=import_id,
+                imported_at=imported_at,
+                source_key=source_key,
+            )
+
         targets: list[TargetRecord] = []
         seen_keys: set[str] = set()
         sort_index = 0
@@ -512,6 +545,114 @@ class UploadedTargetStore:
                     result_index=result_index,
                     category_name=category_name,
                     category_id=None,
+                    image_width=image_width,
+                    image_height=image_height,
+                    bbox_xywh=round_floats([x, y, w, h]),
+                    bbox_xyxy=round_floats([x, y, x + w, y + h]),
+                    sort_index=sort_index,
+                    import_id=import_id,
+                    imported_at=imported_at,
+                )
+            )
+            sort_index += 1
+
+        targets.sort(key=lambda item: (item.category_name.lower(), item.sort_index))
+        return targets
+
+    def _select_coco_image(
+        self,
+        annotation_payload: dict[str, Any],
+        image_file_name: str,
+        annotation_file_name: str,
+    ) -> dict[str, Any] | None:
+        images = [item for item in annotation_payload.get("images", []) if isinstance(item, dict)]
+        if not images:
+            return None
+
+        image_basename = Path(image_file_name).name.lower()
+        annotation_stem = Path(annotation_file_name).stem.lower()
+        for image in images:
+            file_name = Path(str(image.get("file_name") or "")).name.lower()
+            if file_name and file_name == image_basename:
+                return image
+        for image in images:
+            file_name = Path(str(image.get("file_name") or "")).stem.lower()
+            if file_name and file_name == annotation_stem:
+                return image
+        return images[0]
+
+    def _build_coco_targets(
+        self,
+        annotation_payload: dict[str, Any],
+        annotation_file_name: str,
+        annotation_path: Path,
+        image_file_name: str,
+        image_path: Path,
+        actual_width: int,
+        actual_height: int,
+        import_id: str,
+        imported_at: str,
+        source_key: str = "",
+    ) -> list[TargetRecord]:
+        image_meta = self._select_coco_image(annotation_payload, image_file_name, annotation_file_name)
+        if image_meta is None:
+            return []
+
+        image_id = image_meta.get("id")
+        image_width = int(image_meta.get("width") or actual_width)
+        image_height = int(image_meta.get("height") or actual_height)
+        if image_width <= 0:
+            image_width = actual_width
+        if image_height <= 0:
+            image_height = actual_height
+
+        categories = {
+            item.get("id"): str(item.get("name") or item.get("id") or "object").strip()
+            for item in annotation_payload.get("categories", [])
+            if isinstance(item, dict)
+        }
+        targets: list[TargetRecord] = []
+        seen_keys: set[str] = set()
+        sort_index = 0
+        for result_index, annotation in enumerate(annotation_payload.get("annotations", [])):
+            if not isinstance(annotation, dict):
+                continue
+            if image_id is not None and str(annotation.get("image_id")) != str(image_id):
+                continue
+            bbox = annotation.get("bbox") or []
+            if not isinstance(bbox, list) or len(bbox) < 4:
+                continue
+            x, y, w, h = [float(value) for value in bbox[:4]]
+            if w <= 0 or h <= 0:
+                continue
+
+            category_id_raw = annotation.get("category_id")
+            category_name = categories.get(category_id_raw) or str(category_id_raw or "object").strip()
+            category_id = None
+            try:
+                category_id = int(category_id_raw)
+            except (TypeError, ValueError):
+                pass
+            annotation_id = str(annotation.get("id", f"annotation_{result_index}"))
+            key = sanitize_component(
+                f"upload__{import_id}__{source_key or 'source'}__{category_name}__{annotation_id}__{result_index}"
+            )
+            if key in seen_keys:
+                key = sanitize_component(f"{key}__dup_{result_index}")
+            seen_keys.add(key)
+
+            targets.append(
+                TargetRecord(
+                    key=key,
+                    annotation_file_name=annotation_file_name,
+                    annotation_json_path=str(annotation_path.resolve()),
+                    image_path=str(image_path.resolve()),
+                    image_file_name=image_file_name,
+                    annotation_id=annotation_id,
+                    source_annotation_id=str(annotation.get("id")) if annotation.get("id") is not None else None,
+                    result_index=result_index,
+                    category_name=category_name or "object",
+                    category_id=category_id,
                     image_width=image_width,
                     image_height=image_height,
                     bbox_xywh=round_floats([x, y, w, h]),
@@ -741,6 +882,48 @@ class Sam3InferenceService:
             return value.numpy()
         return value
 
+    @staticmethod
+    def _expected_mask_input_size(model: Any) -> tuple[int, int] | None:
+        predictor = getattr(model, "inst_interactive_predictor", None)
+        sam_model = getattr(predictor, "model", None)
+        prompt_encoder = getattr(sam_model, "sam_prompt_encoder", None)
+        mask_input_size = getattr(prompt_encoder, "mask_input_size", None)
+        if mask_input_size and len(mask_input_size) == 2:
+            return int(mask_input_size[0]), int(mask_input_size[1])
+        image_embedding_size = getattr(prompt_encoder, "image_embedding_size", None)
+        if image_embedding_size and len(image_embedding_size) == 2:
+            return int(image_embedding_size[0]) * 4, int(image_embedding_size[1]) * 4
+        return None
+
+    def _normalize_mask_input_for_model(self, model: Any, mask_input: Any) -> Any:
+        runtime = self._load_runtime()
+        np = runtime["np"]
+        torch = runtime["torch"]
+        normalized = np.asarray(mask_input, dtype=np.float32)
+        normalized = np.squeeze(normalized)
+        if normalized.ndim == 2:
+            normalized = normalized[None, :, :]
+        elif normalized.ndim == 3:
+            if normalized.shape[0] != 1:
+                if normalized.shape[-1] == 1:
+                    normalized = np.moveaxis(normalized, -1, 0)
+                else:
+                    normalized = normalized[:1, :, :]
+        else:
+            raise ValueError(f"Unsupported mask input shape: {normalized.shape}")
+
+        expected_size = self._expected_mask_input_size(model)
+        if expected_size and tuple(normalized.shape[-2:]) != expected_size:
+            tensor = torch.as_tensor(normalized[None, :, :, :], dtype=torch.float32)
+            tensor = torch.nn.functional.interpolate(
+                tensor,
+                size=expected_size,
+                mode="bilinear",
+                align_corners=False,
+            )
+            normalized = tensor[0].detach().cpu().numpy()
+        return np.clip(normalized, -32.0, 32.0).astype(np.float32, copy=False)
+
     def _flatten_prediction_outputs(self, masks: Any, scores: Any, logits: Any) -> tuple[Any, Any, Any]:
         np = self._load_runtime()["np"]
         masks_np = np.asarray(masks)
@@ -966,9 +1149,7 @@ class Sam3InferenceService:
             point_coords = np.asarray([[float(point.x), float(point.y)] for point in working_points], dtype=np.float32)
             point_labels = np.asarray([int(point.label) for point in working_points], dtype=np.int32)
 
-        mask_input = np.asarray(previous_logits, dtype=np.float32)
-        if mask_input.ndim == 2:
-            mask_input = mask_input[None, :, :]
+        mask_input = self._normalize_mask_input_for_model(model, previous_logits)
 
         autocast_context = (
             torch.autocast(device_type=resolved_device, enabled=False)
@@ -1216,6 +1397,37 @@ class MaskIterationService:
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return path
 
+    @staticmethod
+    def _coco_annotation_to_rectangle_result(
+        session: SessionState,
+        payload: dict[str, Any],
+        annotation: dict[str, Any],
+        result_index: int,
+    ) -> dict[str, Any]:
+        image_width = max(1, int(session.target.image_width))
+        image_height = max(1, int(session.target.image_height))
+        bbox = annotation.get("bbox") or session.target.bbox_xywh
+        x, y, w, h = [float(value) for value in bbox[:4]]
+        category_lookup = {
+            item.get("id"): str(item.get("name") or "").strip()
+            for item in payload.get("categories", [])
+            if isinstance(item, dict)
+        }
+        category_name = category_lookup.get(annotation.get("category_id")) or session.target.category_name
+        return {
+            "id": str(annotation.get("id", f"annotation_{result_index}")),
+            "type": "rectanglelabels",
+            "original_width": image_width,
+            "original_height": image_height,
+            "value": {
+                "x": (x / float(image_width)) * 100.0,
+                "y": (y / float(image_height)) * 100.0,
+                "width": (w / float(image_width)) * 100.0,
+                "height": (h / float(image_height)) * 100.0,
+                "rectanglelabels": [category_name or "object"],
+            },
+        }
+
     def _find_target_annotation_result(self, session: SessionState, payload: dict[str, Any]) -> dict[str, Any]:
         results = payload.get("results") or []
         match: dict[str, Any] | None = None
@@ -1223,14 +1435,26 @@ class MaskIterationService:
             str(session.target.annotation_id),
             str(session.target.source_annotation_id),
         }
-        for index, result in enumerate(results):
-            result_id = result.get("id")
-            if result_id is not None and str(result_id) in target_ids:
-                match = result
-                break
-            if index == int(session.target.result_index):
-                match = result
-                break
+        if results:
+            for index, result in enumerate(results):
+                result_id = result.get("id")
+                if result_id is not None and str(result_id) in target_ids:
+                    match = result
+                    break
+                if index == int(session.target.result_index):
+                    match = result
+                    break
+        else:
+            for index, annotation in enumerate(payload.get("annotations", []) or []):
+                if not isinstance(annotation, dict):
+                    continue
+                annotation_id = annotation.get("id")
+                if annotation_id is not None and str(annotation_id) in target_ids:
+                    match = self._coco_annotation_to_rectangle_result(session, payload, annotation, index)
+                    break
+                if index == int(session.target.result_index):
+                    match = self._coco_annotation_to_rectangle_result(session, payload, annotation, index)
+                    break
         if match is None:
             annotation_path = Path(session.target.annotation_json_path)
             raise ValueError(
