@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -32,78 +31,14 @@ def torch_available() -> bool:
         return False
 
 
-def should_auto_reexec_conda(torch_available: bool, env_name: str) -> bool:
-    if torch_available:
-        return False
-    if os.environ.get("MASK_ITERATION_SKIP_CONDA_REEXEC") == "1":
-        return False
-    if os.environ.get("CONDA_DEFAULT_ENV") == env_name:
-        return False
-    return True
-
-
-def build_conda_reexec_command(
-    conda_bin: str,
-    env_name: str,
-    script_path: Path,
-    argv: list[str],
-) -> list[str]:
-    return [
-        conda_bin,
-        "run",
-        "--no-capture-output",
-        "-n",
-        env_name,
-        "python",
-        str(script_path),
-        *argv,
-    ]
-
-
-def find_conda_executable() -> str | None:
-    candidates: list[str | None] = [
-        os.environ.get("CONDA_EXE"),
-        shutil.which("conda"),
-        "/opt/anaconda3/bin/conda",
-        str(Path.home() / "miniconda3" / "bin" / "conda"),
-        str(Path.home() / "anaconda3" / "bin" / "conda"),
-        str(Path.home() / "miniconda3" / "Scripts" / "conda.exe"),
-        str(Path.home() / "anaconda3" / "Scripts" / "conda.exe"),
-        str(Path.home() / "AppData" / "Local" / "miniconda3" / "Scripts" / "conda.exe"),
-        str(Path.home() / "AppData" / "Local" / "anaconda3" / "Scripts" / "conda.exe"),
-        r"C:\ProgramData\miniconda3\Scripts\conda.exe",
-        r"C:\ProgramData\anaconda3\Scripts\conda.exe",
-    ]
-    seen: set[str] = set()
-    for candidate in candidates:
-        if not candidate or candidate in seen:
-            continue
-        seen.add(candidate)
-        if Path(candidate).exists() or candidate.lower().endswith(("conda.exe", "conda.bat")) and candidate == shutil.which("conda"):
-            return candidate
-    return None
-
-
-def maybe_reexec_conda_for_torch() -> None:
+def require_current_environment_torch() -> None:
     configure_runtime_environment()
-    env_name = os.environ.get("CONDA_ENV_NAME", "mask_iteration_sam3")
-    if not should_auto_reexec_conda(torch_available(), env_name):
+    if torch_available():
         return
-    conda_bin = find_conda_executable()
-    if not conda_bin:
-        print(
-            f"[bundle] torch is not available in {sys.executable}, and conda was not found. "
-            "Install dependencies with setup_conda.sh/setup_conda.bat or activate mask_iteration_sam3.",
-            flush=True,
-        )
-        return
-    command = build_conda_reexec_command(conda_bin, env_name, Path(__file__).resolve(), sys.argv[1:])
-    os.environ["MASK_ITERATION_SKIP_CONDA_REEXEC"] = "1"
-    print(
-        f"[bundle] torch is not available in {sys.executable}; restarting with conda env {env_name}...",
-        flush=True,
+    raise ModuleNotFoundError(
+        "No module named 'torch' in the current Python environment: "
+        f"{sys.executable}. Activate the intended environment or install torch into this environment."
     )
-    os.execv(conda_bin, command)
 
 
 def parse_args() -> argparse.Namespace:
@@ -163,17 +98,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--validate-tools-dir",
         type=Path,
-        default=None,
-        help="Optional external Validate_tools directory for the review panel.",
+        default=PROJECT_ROOT / "Validate_tools",
+        help="Validate_tools directory for the review panel.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
-    maybe_reexec_conda_for_torch()
+    require_current_environment_torch()
     args = parse_args()
     if not args.static_dir.exists():
         raise FileNotFoundError(f"Missing static frontend dir: {args.static_dir}")
+    if args.validate_tools_dir and not args.validate_tools_dir.exists():
+        raise FileNotFoundError(f"Validate_tools directory does not exist: {args.validate_tools_dir}")
 
     target_store = UploadedTargetStore(args.imports_root.resolve())
     session_store = SessionStore(args.sessions_root.resolve())
