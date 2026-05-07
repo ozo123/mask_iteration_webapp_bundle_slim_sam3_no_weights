@@ -8,7 +8,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mask_iteration_webapp.service import UploadedTargetStore, SessionStore, MaskIterationService
+from mask_iteration_webapp.service import RUN_COCO_DIR, RUN_KEEP_DIR, UploadedTargetStore, SessionStore, MaskIterationService
 
 
 class DummyInference:
@@ -33,7 +33,7 @@ def _coco(annotation_id=101, image_name="a.png"):
 
 
 def test_export_work_dataset_copy_contains_current_images_annotations_and_pair_report(tmp_path):
-    target_store = UploadedTargetStore(tmp_path / "work_dataset")
+    target_store = UploadedTargetStore(tmp_path / "runs")
     session_store = SessionStore(tmp_path / "sessions")
     service = MaskIterationService(target_store, session_store, DummyInference())
 
@@ -42,19 +42,23 @@ def test_export_work_dataset_copy_contains_current_images_annotations_and_pair_r
         image_data_url=_png_data_url(),
         annotation_file_name="ann.json",
         annotation_text=json.dumps(_coco(101)),
-        image_set_id="same_images",
+        image_set_id="state_a",
         annotation_state_id="state_a",
     )
 
-    export = service.export_work_dataset_copy(image_set_id="same_images", annotation_state_id="state_a", export_name="manual_name")
-    export_root = Path(export["export_root"])
+    export = service.export_work_dataset_copy(image_set_id="state_a", annotation_state_id="state_a", export_name="manual_name")
+    export_root = Path(export["copy_root"])
 
     assert export_root.name == "manual_name"
-    assert (export_root / "images" / "a.png").exists()
-    assert (export_root / "annotations" / "ann.json").exists()
+    assert (export_root / "images" / RUN_KEEP_DIR / "a.png").exists()
+    assert (export_root / "annotations" / RUN_KEEP_DIR / RUN_COCO_DIR / "ann.json").exists()
     manifest = json.loads((export_root / "manifest.json").read_text())
-    assert manifest["image_set_id"] == "same_images"
-    assert manifest["annotation_state_id"] == "state_a"
+    assert manifest["source_copy_id"] == "state_a"
+    assert manifest["copy_id"] == "manual_name"
+    assert manifest["targets"][0]["import_id"] == "manual_name"
+    assert "manual_name" in manifest["targets"][0]["key"]
+    assert Path(manifest["targets"][0]["image_path"]).is_relative_to(export_root)
+    assert Path(manifest["targets"][0]["annotation_json_path"]).is_relative_to(export_root)
     assert manifest["pairing"]["matched_count"] == 1
     assert manifest["pairing"]["missing_annotation_files"] == []
     assert manifest["pairing"]["missing_image_files"] == []

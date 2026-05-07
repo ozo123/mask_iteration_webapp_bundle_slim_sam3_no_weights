@@ -27,13 +27,6 @@ def create_handler(service, static_dir: Path):
                     return self._serve_static(relpath)
                 if path == "/api/bootstrap":
                     return self._send_json(HTTPStatus.OK, service.bootstrap_payload())
-                if path == "/api/deletions/export":
-                    payload, file_name = service.export_deleted_targets_payload()
-                    return self._send_json(
-                        HTTPStatus.OK,
-                        payload,
-                        extra_headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-                    )
                 if path.startswith("/api/targets/") and path.endswith("/image"):
                     target_key = unquote(path[len("/api/targets/") : -len("/image")]).strip("/")
                     return self._serve_image(target_key)
@@ -42,19 +35,6 @@ def create_handler(service, static_dir: Path):
                     query = parse_qs(parsed.query)
                     relpath = str((query.get("relpath") or [""])[0]).strip()
                     return self._serve_validate_artifact(target_key, relpath)
-                if path.startswith("/api/sessions/") and path.endswith("/export"):
-                    target_key = unquote(path[len("/api/sessions/") : -len("/export")]).strip("/")
-                    query = parse_qs(parsed.query)
-                    export_format = (query.get("format") or ["session"])[0]
-                    if export_format == "legacy":
-                        payload, file_name = service.export_legacy_payload(target_key)
-                    else:
-                        payload, file_name = service.export_session_payload(target_key)
-                    return self._send_json(
-                        HTTPStatus.OK,
-                        payload,
-                        extra_headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-                    )
                 if path.startswith("/api/sessions/"):
                     target_key = unquote(path[len("/api/sessions/") :]).strip("/")
                     payload = service.get_existing_session_payload(target_key)
@@ -93,18 +73,6 @@ def create_handler(service, static_dir: Path):
                 if path == "/api/open-session":
                     target_key = str(payload.get("target_key", "")).strip()
                     return self._send_json(HTTPStatus.OK, service.open_session(target_key))
-
-                if path == "/api/categories/export":
-                    category_payload, file_name = service.export_category_payload(
-                        category_name=str(payload.get("category_name", "")),
-                        target_keys=payload.get("target_keys"),
-                        source_label=payload.get("source_label"),
-                    )
-                    return self._send_json(
-                        HTTPStatus.OK,
-                        category_payload,
-                        extra_headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-                    )
 
                 if path == "/api/work-dataset/export":
                     return self._send_json(
@@ -251,6 +219,13 @@ def create_handler(service, static_dir: Path):
                     return self._send_json(
                         HTTPStatus.OK,
                         service.rollback(target_key=target_key, history_id=str(payload["history_id"])),
+                    )
+
+                if path.startswith("/api/sessions/") and path.endswith("/history/delete"):
+                    target_key = unquote(path[len("/api/sessions/") : -len("/history/delete")]).strip("/")
+                    return self._send_json(
+                        HTTPStatus.OK,
+                        service.delete_history_items(target_key=target_key, history_ids=payload.get("history_ids")),
                     )
 
                 if path.startswith("/api/sessions/") and path.endswith("/metadata"):

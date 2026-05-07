@@ -38,6 +38,7 @@
       margin: 0;
       color: var(--text);
       font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      overflow-x: hidden;
       background:
         linear-gradient(90deg, rgba(17, 25, 35, 0.035) 1px, transparent 1px),
         linear-gradient(180deg, rgba(17, 25, 35, 0.035) 1px, transparent 1px),
@@ -45,7 +46,7 @@
       background-size: 36px 36px;
     }
     .page {
-      width: min(1660px, calc(100vw - 28px));
+      width: min(90vw, calc(100vw - 28px));
       margin: 14px auto 20px;
       display: grid;
       gap: 12px;
@@ -91,6 +92,9 @@
     }
     .panel {
       padding: 12px;
+    }
+    .wide-panel {
+      width: 100%;
     }
     .compact-panel {
       padding: 14px;
@@ -194,8 +198,7 @@
     #importBtn,
     #exportWorkDatasetBtn,
     #iterateBtn,
-    #validateRunBtn,
-    #exportDeletedBtn {
+    #validateRunBtn {
       border-color: var(--blue);
       background: var(--blue);
       color: #fff;
@@ -217,6 +220,44 @@
       grid-template-columns: minmax(0, 1fr) 356px;
       gap: 12px;
       align-items: start;
+    }
+    .mask-editing-layout {
+      display: grid;
+      grid-template-columns: 252px minmax(0, 1fr) 356px;
+      gap: 12px;
+      align-items: start;
+    }
+    .canvas-toolbar {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+    .toolbar-group {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .toolbar-group .section-title {
+      line-height: 1.2;
+    }
+    .toolbar-primary,
+    .toolbar-grid {
+      display: grid;
+      gap: 8px;
+    }
+    .toolbar-grid.two-col {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .toolbar-grid button,
+    .toolbar-primary button {
+      width: 100%;
+      min-width: 0;
+    }
+    .toolbar-group .subtle {
+      margin-top: -2px;
     }
     .collapsible-block {
       border: 1px solid var(--border);
@@ -280,7 +321,7 @@
       gap: 10px;
     }
     .viewer-wrap {
-      min-height: 560px;
+      min-height: 809px;
       border: 1px solid var(--border-strong);
       border-radius: var(--radius);
       overflow: hidden;
@@ -297,6 +338,7 @@
       width: 100%;
       height: 100%;
       min-height: inherit;
+      overflow: hidden;
     }
     canvas {
       display: block;
@@ -520,7 +562,14 @@
     @media (max-width: 1220px) {
       .app-header { grid-template-columns: 1fr; }
       .layout { grid-template-columns: 1fr; }
-      .viewer-wrap { min-height: 460px; }
+      .mask-editing-layout {
+        grid-template-columns: minmax(0, 1fr) 336px;
+      }
+      .canvas-toolbar {
+        grid-column: 1 / -1;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .viewer-wrap { min-height: 560px; }
     }
     @media (max-width: 860px) {
       .page { width: min(100vw - 14px, 1660px); margin-top: 8px; }
@@ -539,6 +588,10 @@
       .import-export-grid,
       .import-export-row { grid-template-columns: 1fr; }
       .import-export-action { width: 100%; min-width: 0; }
+      .mask-editing-layout,
+      .canvas-toolbar { grid-template-columns: 1fr; }
+      .toolbar-grid.two-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .viewer-wrap { min-height: 460px; }
       .button-row button,
       .toggle-row button,
       .tool-row button { min-width: 0; width: 100%; }
@@ -557,7 +610,7 @@
       </div>
     </header>
 
-    <section class="panel compact-panel">
+    <section class="panel compact-panel wide-panel">
       <div class="panel-heading">
         <div>
           <div class="eyebrow">Dataset Control</div>
@@ -591,14 +644,14 @@
                   <div class="import-export-row">
                     <div class="field">
                       <label for="exportDatasetNameInput">导出副本命名</label>
-                      <input id="exportDatasetNameInput" type="text" placeholder="默认用标注状态+时间">
+                      <input id="exportDatasetNameInput" type="text" placeholder="例如：场景_20260507_153000">
                     </div>
                     <div class="field">
                       <label for="annotationStateNameInput">状态标注命名</label>
                       <input id="annotationStateNameInput" type="text" placeholder="如 原始/第2轮/复核版">
                     </div>
                   </div>
-                  <button id="exportWorkDatasetBtn" class="import-export-action" type="button">导出当前副本</button>
+                  <button id="exportWorkDatasetBtn" class="import-export-action" type="button">另存当前副本</button>
                 </div>
               </div>
             </div>
@@ -646,27 +699,40 @@
           <input id="notesInput" type="text" placeholder="可选备注">
         </div>
 
-        <div class="field span-8">
-          <label>显示图层</label>
-          <div class="button-row">
-            <button id="toggleBBoxBtn" type="button">显示原始 BBox</button>
-            <button id="togglePromptBoxBtn" type="button" class="hidden">显示 Prompt Box</button>
-            <button id="togglePointsBtn" type="button">显示点 / 线</button>
-            <button id="clearCompareBtn" type="button">清除对比</button>
+        <div class="field span-5">
+          <label for="textPromptInput">文字 Prompt</label>
+          <textarea
+            id="textPromptInput"
+            class="prompt-input"
+            placeholder="框是必选 prompt。这里可以补充文字描述，例如：black office chair with armrest"
+          ></textarea>
+          <div class="subtle">框、点、线和文字会一起参与当前迭代。</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel wide-panel">
+      <div class="panel-heading">
+        <div>
+          <div class="eyebrow">Mask Editing</div>
+          <h2>画布与提示状态</h2>
+        </div>
+        <div class="metric-strip">
+          <span id="targetSummary" class="nav-pill">暂无目标</span>
+        </div>
+      </div>
+      <div class="mask-editing-layout">
+      <aside class="canvas-toolbar" aria-label="画布编辑工具">
+        <div class="toolbar-group">
+          <div class="section-title">主要操作</div>
+          <div class="toolbar-primary">
+            <button id="iterateBtn" type="button">迭代一次</button>
           </div>
         </div>
 
-        <div class="field span-4">
-          <label>当前点标签</label>
-          <div class="toggle-row">
-            <button id="fgModeBtn" class="toggle-btn" type="button">前景点 (1)</button>
-            <button id="bgModeBtn" class="toggle-btn" type="button">背景点 (0)</button>
-          </div>
-        </div>
-
-        <div class="field span-7">
-          <label>交互工具</label>
-          <div class="tool-row">
+        <div class="toolbar-group">
+          <div class="section-title">交互工具</div>
+          <div class="toolbar-grid two-col">
             <button id="pointToolBtn" class="tool-btn" type="button">点模式</button>
             <button id="lineToolBtn" class="tool-btn" type="button">线模式</button>
             <button id="lockRegionToolBtn" class="tool-btn" type="button">闭合锁区</button>
@@ -677,20 +743,27 @@
           <div class="subtle">闭合锁区草稿会跟随当前目标显示。</div>
         </div>
 
-        <div class="field span-5">
-          <label for="textPromptInput">文字 Prompt</label>
-          <textarea
-            id="textPromptInput"
-            class="prompt-input"
-            placeholder="框是必选 prompt。这里可以补充文字描述，例如：black office chair with armrest"
-          ></textarea>
-          <div class="subtle">框、点、线和文字会一起参与当前迭代。</div>
+        <div class="toolbar-group">
+          <div class="section-title">当前点标签</div>
+          <div class="toolbar-grid two-col">
+            <button id="fgModeBtn" class="toggle-btn" type="button">前景点 (1)</button>
+            <button id="bgModeBtn" class="toggle-btn" type="button">背景点 (0)</button>
+          </div>
         </div>
 
-        <div class="field span-12">
-          <label>操作</label>
-          <div class="button-row">
-            <button id="iterateBtn" type="button">迭代一次</button>
+        <div class="toolbar-group">
+          <div class="section-title">显示图层</div>
+          <div class="toolbar-grid">
+            <button id="toggleBBoxBtn" type="button">显示原始 BBox</button>
+            <button id="togglePromptBoxBtn" type="button" class="hidden">显示 Prompt Box</button>
+            <button id="togglePointsBtn" type="button">显示点 / 线</button>
+            <button id="clearCompareBtn" type="button">清除对比</button>
+          </div>
+        </div>
+
+        <div class="toolbar-group">
+          <div class="section-title">操作</div>
+          <div class="toolbar-grid two-col">
             <button id="undoBtn" type="button">撤销点</button>
             <button id="clearPointsBtn" type="button">清空点</button>
             <button id="clearLinesBtn" type="button">清空线</button>
@@ -698,25 +771,10 @@
             <button id="deleteImageBtn" type="button">删除整张图</button>
             <button id="markDifficultBtn" type="button">标记难处理</button>
             <button id="markBlurryImageBtn" type="button">标记模糊图</button>
-            <button id="exportLegacyBtn" type="button">导出旧格式</button>
-            <button id="exportSessionBtn" type="button">导出历史数据</button>
-            <button id="exportDeletedBtn" type="button">导出删除记录</button>
           </div>
         </div>
-      </div>
-    </section>
+      </aside>
 
-    <section class="panel">
-      <div class="panel-heading">
-        <div>
-          <div class="eyebrow">Mask Editing</div>
-          <h2>画布与提示状态</h2>
-        </div>
-        <div class="metric-strip">
-          <span id="targetSummary" class="nav-pill">暂无目标</span>
-        </div>
-      </div>
-      <div class="layout">
       <div>
         <div class="viewer-stack">
           <div id="canvasWrap" class="viewer-wrap">
@@ -734,6 +792,9 @@
       <div class="grid">
         <div class="field span-12">
           <label>历史轮次</label>
+          <div class="button-row" style="margin-bottom:8px;">
+            <button id="deleteHistoryBtn" type="button">删除所选轮次</button>
+          </div>
           <div id="historyList" class="history-list"></div>
         </div>
 
@@ -756,7 +817,7 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel wide-panel">
       <div class="section-title">Validate Tools</div>
       <div class="divider"></div>
       <div class="grid" style="margin-bottom:10px;">
@@ -860,9 +921,7 @@
       deleteImageBtn: document.getElementById("deleteImageBtn"),
       markDifficultBtn: document.getElementById("markDifficultBtn"),
       markBlurryImageBtn: document.getElementById("markBlurryImageBtn"),
-      exportLegacyBtn: document.getElementById("exportLegacyBtn"),
-      exportSessionBtn: document.getElementById("exportSessionBtn"),
-      exportDeletedBtn: document.getElementById("exportDeletedBtn"),
+      deleteHistoryBtn: document.getElementById("deleteHistoryBtn"),
       canvasWrap: document.getElementById("canvasWrap"),
       canvasStage: document.getElementById("canvasStage"),
       viewer: document.getElementById("viewer"),
@@ -914,6 +973,7 @@
       image: null,
       imageVersion: 0,
       maskCache: new Map(),
+      selectedHistoryIds: new Set(),
       busy: false,
       currentLabel: 1,
       currentTool: "point",
@@ -941,7 +1001,6 @@
         points: [],
         hoverPoint: null,
       },
-      categoryExportPrompted: new Set(),
     };
 
     function clamp(value, min, max) {
@@ -1169,7 +1228,6 @@
       state.targets = Array.isArray(targets) ? targets.slice() : [];
       state.targetSourceLabel = sourceLabel || "最近导入";
       state.pendingNextTargetKey = "";
-      state.categoryExportPrompted.clear();
       if (!state.targets.length) {
         state.selectedTargetKey = "";
       } else if (!state.targets.some((item) => item.key === state.selectedTargetKey)) {
@@ -1180,6 +1238,7 @@
       state.compareHistoryId = null;
       state.image = null;
       state.maskCache.clear();
+      state.selectedHistoryIds.clear();
       state.drawingStroke.active = false;
       state.drawingStroke.points = [];
       resetDrawingRegion();
@@ -1224,7 +1283,7 @@
       const hasRegionDraft = Boolean(state.drawingRegion.active && state.drawingRegion.points.length);
       const canCommitRegion = Boolean(hasRegionDraft && normalizeRegionPointsForSave(state.drawingRegion.points || []));
       const validateAvailable = Boolean(state.bootstrap && state.bootstrap.validate_tools && state.bootstrap.validate_tools.available);
-      el.exportWorkDatasetBtn.disabled = !state.currentImageSetId || !state.currentAnnotationStateId || state.busy;
+      el.exportWorkDatasetBtn.disabled = !state.currentAnnotationStateId || state.busy;
       el.importBtn.disabled = state.busy;
       el.prevTargetBtn.disabled = !hasTargets || state.busy;
       el.nextTargetBtn.disabled = !hasTargets || state.busy;
@@ -1232,8 +1291,6 @@
       el.undoBtn.disabled = !hasWorkingPoints || state.busy;
       el.clearPointsBtn.disabled = !hasWorkingPoints || state.busy;
       el.clearLinesBtn.disabled = !hasLineStrokes || state.busy;
-      el.exportLegacyBtn.disabled = !hasSession || state.busy;
-      el.exportSessionBtn.disabled = !hasSession || state.busy;
       el.clearCompareBtn.disabled = !state.compareHistoryId;
       el.textPromptInput.disabled = !hasSession || state.busy;
       el.pointToolBtn.disabled = !hasSession || state.busy;
@@ -1246,7 +1303,7 @@
       el.deleteImageBtn.disabled = !hasSession || state.busy;
       el.markDifficultBtn.disabled = !hasSession || state.busy;
       el.markBlurryImageBtn.disabled = !hasSession || state.busy;
-      el.exportDeletedBtn.disabled = !state.bootstrap || state.busy;
+      el.deleteHistoryBtn.disabled = !hasSession || state.busy || !state.selectedHistoryIds.size;
       el.validateRunBtn.disabled = !hasSession || state.busy || !validateAvailable;
     }
 
@@ -1952,6 +2009,9 @@
         const pointCount = (item.manual_points_snapshot || []).length;
         const strokeCount = (item.line_strokes_snapshot || []).length;
         const regionCount = (item.locked_regions_snapshot || []).length;
+        const canDelete = item.history_id !== "init" && item.history_id !== state.session.current_history_id;
+        const checked = state.selectedHistoryIds.has(item.history_id) ? "checked" : "";
+        const disabled = canDelete ? "" : "disabled";
         return `
           <div class="${classes.join(" ")}">
             <div class="history-row">
@@ -1968,6 +2028,10 @@
                 </div>
               </div>
               <div class="button-row">
+                <label class="small-button" style="display:inline-flex;align-items:center;gap:6px;">
+                  <input data-history-select="${escapeHtml(item.history_id)}" type="checkbox" ${checked} ${disabled}>
+                  选择
+                </label>
                 <button class="small-button" data-history-compare="${item.history_id}" type="button">对比</button>
                 <button class="small-button" data-history-rollback="${item.history_id}" type="button">回退到此</button>
               </div>
@@ -1984,6 +2048,18 @@
           const historyId = button.dataset.historyCompare;
           state.compareHistoryId = state.compareHistoryId === historyId ? null : historyId;
           renderAll();
+        });
+      });
+      el.historyList.querySelectorAll("[data-history-select]").forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+          const historyId = checkbox.dataset.historySelect;
+          if (!historyId) return;
+          if (checkbox.checked) {
+            state.selectedHistoryIds.add(historyId);
+          } else {
+            state.selectedHistoryIds.delete(historyId);
+          }
+          renderButtons();
         });
       });
       el.historyList.querySelectorAll("[data-history-rollback]").forEach((button) => {
@@ -2346,74 +2422,6 @@
       });
     }
 
-    function categoryExportKey(categoryName) {
-      return `${state.targetSourceLabel}::${categoryName}`;
-    }
-
-    function categoryTargets(categoryName) {
-      return (state.targets || []).filter((target) => target.category_name === categoryName);
-    }
-
-    function isCategoryComplete(categoryName) {
-      const targets = categoryTargets(categoryName);
-      return Boolean(targets.length) && targets.every((target) => Number(target.history_count || 0) > 1);
-    }
-
-    async function exportCompletedCategory(categoryName, targets) {
-      const response = await fetch("/api/categories/export", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({
-          category_name: categoryName,
-          target_keys: targets.map((target) => target.key),
-          source_label: state.targetSourceLabel,
-        }),
-      });
-      if (!response.ok) {
-        const payload = await parseJsonSafely(response);
-        throw new Error(payload.error || "Category export failed");
-      }
-      const blob = await response.blob();
-      const disposition = response.headers.get("Content-Disposition") || "";
-      const match = disposition.match(/filename="([^"]+)"/);
-      const fileName = match ? match[1] : `category_${categoryName}.json`;
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = fileName;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-      return fileName;
-    }
-
-    function maybePromptCategoryExport(session) {
-      if (!session || !session.target) return;
-      const categoryName = session.target.category_name;
-      const key = categoryExportKey(categoryName);
-      if (!categoryName || state.categoryExportPrompted.has(key) || !isCategoryComplete(categoryName)) {
-        return;
-      }
-      state.categoryExportPrompted.add(key);
-      window.setTimeout(async () => {
-        const targets = categoryTargets(categoryName);
-        const ok = window.confirm(`类别「${categoryName}」的 ${targets.length} 个标注都已生成迭代记录。是否现在导出这一类别的所有数据？`);
-        if (!ok) return;
-        try {
-          setBusy(`Exporting category ${categoryName}...`);
-          const fileName = await exportCompletedCategory(categoryName, targets);
-          state.busy = false;
-          clearActiveSessionForMemory(`Exported ${fileName}. Current session cache cleared.`);
-        } catch (error) {
-          state.busy = false;
-          renderButtons();
-          setStatus(error.message || String(error), true);
-        }
-      }, 0);
-    }
-
     async function loadBootstrap() {
       setBusy("Loading recent targets...");
       try {
@@ -2442,11 +2450,18 @@
       if (!state.compareHistoryId || !state.session.history.some((item) => item.history_id === state.compareHistoryId)) {
         state.compareHistoryId = null;
       }
+      const historyIds = new Set((state.session.history || []).map((item) => item.history_id));
+      state.selectedHistoryIds = new Set(
+        Array.from(state.selectedHistoryIds).filter((historyId) => (
+          historyIds.has(historyId)
+          && historyId !== "init"
+          && historyId !== state.session.current_history_id
+        ))
+      );
       el.variantName.value = state.session.variant_name || "manual_clicks";
       el.notesInput.value = state.session.notes || "";
       el.textPromptInput.value = state.session.text_prompt || "";
       renderAll();
-      maybePromptCategoryExport(state.session);
     }
 
     function loadImageForTarget(targetKey) {
@@ -2514,7 +2529,36 @@
     }
 
     function makeImportSessionId(folderLabel) {
-      return `${sanitizeSessionComponent(folderLabel)}_work_dataset`;
+      return sanitizeSessionComponent(folderLabel);
+    }
+
+    function formatLocalTimestamp() {
+      const date = new Date();
+      const pad = (value) => String(value).padStart(2, "0");
+      return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+    }
+
+    function makeDefaultCopyName(sceneLabel) {
+      return sanitizeSessionComponent(`${sanitizeSessionComponent(sceneLabel || "场景")}_${formatLocalTimestamp()}`);
+    }
+
+    function resolveCurrentCopyId(sceneLabel) {
+      const manualText = (el.exportDatasetNameInput.value || "").trim();
+      const manual = manualText ? sanitizeSessionComponent(manualText) : "";
+      return manual || makeDefaultCopyName(sceneLabel);
+    }
+
+    function isStateAnnotationFile(file) {
+      const relativePath = normalizeRelativePath(file.webkitRelativePath || file.name).toLowerCase();
+      return /(^|\/)state(\/|$)/.test(relativePath) || /\.state\.json$/i.test(getBaseName(relativePath));
+    }
+
+    function selectAnnotationFiles(files) {
+      const jsonFiles = files
+        .filter((file) => /\.json$/i.test(getBaseName(file.name)))
+        .filter((file) => !/^manifest\.json$/i.test(getBaseName(file.name)));
+      const stateFiles = jsonFiles.filter(isStateAnnotationFile);
+      return stateFiles.length ? stateFiles : jsonFiles;
     }
 
     function buildImageFileIndex(files) {
@@ -2545,6 +2589,17 @@
         candidates.push(imageFileName);
         candidates.push(stripRootFolder(imageFileName));
         candidates.push(getBaseName(imageFileName));
+      }
+      const stateImageFileName = normalizeRelativePath(
+        annotationPayload
+        && annotationPayload.session
+        && annotationPayload.session.target
+        && annotationPayload.session.target.image_file_name
+      );
+      if (stateImageFileName) {
+        candidates.push(stateImageFileName);
+        candidates.push(stripRootFolder(stateImageFileName));
+        candidates.push(getBaseName(stateImageFileName));
       }
       const cocoImages = annotationPayload && Array.isArray(annotationPayload.images)
         ? annotationPayload.images
@@ -2579,19 +2634,21 @@
     }
 
     async function exportCurrentWorkDatasetCopy() {
-      const imageFolderLabel = getSelectedFolderLabel(Array.from(el.imageFolderUpload.files || [])) || "图片文件夹";
-      const imageSetId = state.currentImageSetId || makeImportSessionId(imageFolderLabel);
-      const annotationStateId = state.currentAnnotationStateId || makeImportSessionId((el.annotationStateNameInput.value || "").trim());
-      if (!imageSetId || !annotationStateId) {
-        setStatus("请先导入或填写状态标注命名。", true);
+      const imageFolderLabel = getSelectedFolderLabel(Array.from(el.imageFolderUpload.files || [])) || state.currentImageSetId || "场景";
+      const imageSetId = state.currentImageSetId;
+      const annotationStateId = state.currentAnnotationStateId;
+      const exportNameText = (el.exportDatasetNameInput.value || "").trim();
+      const exportName = exportNameText ? sanitizeSessionComponent(exportNameText) : makeDefaultCopyName(imageFolderLabel);
+      if (!annotationStateId) {
+        setStatus("请先导入一个副本。", true);
         return;
       }
       try {
-        setBusy("Exporting current work dataset copy...");
+        setBusy("Saving a local copy...");
         const payload = await apiPost("/api/work-dataset/export", {
           image_set_id: imageSetId,
           annotation_state_id: annotationStateId,
-          export_name: el.exportDatasetNameInput.value || "",
+          export_name: exportName,
         });
         const pairing = payload.pairing || {};
         const warnings = [];
@@ -2601,7 +2658,7 @@
         if ((pairing.missing_image_files || []).length) {
           warnings.push(`无图片标注 ${pairing.missing_image_files.length}`);
         }
-        clearBusy(`动态副本已导出: ${payload.export_root}${warnings.length ? `；配对警告：${warnings.join("，")}` : ""}`);
+        clearBusy(`当前副本已另存到: ${payload.copy_root || payload.export_root}${warnings.length ? `；配对警告：${warnings.join("，")}` : ""}`);
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -2611,8 +2668,7 @@
 
     async function importCurrentFolders() {
       const imageFiles = Array.from((el.imageFolderUpload.files || []));
-      const annotationFiles = Array.from((el.annotationFolderUpload.files || []))
-        .filter((file) => /\.json$/i.test(getBaseName(file.name)));
+      const annotationFiles = selectAnnotationFiles(Array.from((el.annotationFolderUpload.files || [])));
 
       if (!imageFiles.length) {
         setStatus("请先选择图片文件夹。", true);
@@ -2634,9 +2690,10 @@
         const annotationFolderLabel = getSelectedFolderLabel(annotationFiles) || "标注文件夹";
         const imageSetLabel = (imageFolderLabel || "图片文件夹").trim();
         const annotationStateLabel = (el.annotationStateNameInput.value || annotationFolderLabel || "标注文件夹").trim();
-        const imageSetId = makeImportSessionId(imageSetLabel);
-        const annotationStateId = makeImportSessionId(annotationStateLabel);
-        const importSessionId = annotationStateId;
+        const copyId = resolveCurrentCopyId(imageSetLabel);
+        const imageSetId = copyId;
+        const annotationStateId = copyId;
+        const importSessionId = copyId;
         const importSessionLabel = `图片: ${imageSetLabel} | 标注状态: ${annotationStateLabel}`;
 
         for (let index = 0; index < annotationFiles.length; index += 1) {
@@ -2698,8 +2755,7 @@
 
     async function importCurrentFoldersSafe() {
       const imageFiles = Array.from((el.imageFolderUpload.files || []));
-      const annotationFiles = Array.from((el.annotationFolderUpload.files || []))
-        .filter((file) => /\.json$/i.test(getBaseName(file.name)));
+      const annotationFiles = selectAnnotationFiles(Array.from((el.annotationFolderUpload.files || [])));
 
       if (!imageFiles.length) {
         setStatus("请先选择图片文件夹。", true);
@@ -2724,9 +2780,10 @@
         const annotationFolderLabel = getSelectedFolderLabel(annotationFiles) || "标注文件夹";
         const imageSetLabel = (imageFolderLabel || "图片文件夹").trim();
         const annotationStateLabel = (el.annotationStateNameInput.value || annotationFolderLabel || "标注文件夹").trim();
-        const imageSetId = makeImportSessionId(imageSetLabel);
-        const annotationStateId = makeImportSessionId(annotationStateLabel);
-        const importSessionId = annotationStateId;
+        const copyId = resolveCurrentCopyId(imageSetLabel);
+        const imageSetId = copyId;
+        const annotationStateId = copyId;
+        const importSessionId = copyId;
         const importSessionLabel = `图片: ${imageSetLabel} | 标注状态: ${annotationStateLabel}`;
 
         for (let index = 0; index < annotationFiles.length; index += 1) {
@@ -2902,6 +2959,26 @@
         const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/undo`, {});
         applySessionPayload(payload);
         clearBusy("Last point undone.");
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function handleDeleteSelectedHistories() {
+      if (!state.session || !state.selectedHistoryIds.size) return;
+      const historyIds = Array.from(state.selectedHistoryIds);
+      const ok = window.confirm(`删除所选 ${historyIds.length} 个历史轮次？\n不能删除 init、当前工作轮次，且不能造成历史断链。`);
+      if (!ok) return;
+      try {
+        setBusy("Deleting selected history items...");
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/history/delete`, {
+          history_ids: historyIds,
+        });
+        state.selectedHistoryIds.clear();
+        applySessionPayload(payload);
+        clearBusy(`Deleted ${historyIds.length} history items.`);
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -3085,59 +3162,6 @@
       } catch (error) {
         state.busy = false;
         renderButtons();
-        setStatus(error.message || String(error), true);
-      }
-    }
-
-    async function downloadExport(format) {
-      if (!state.session) return;
-      try {
-        const response = await fetch(`/api/sessions/${encodeURIComponent(state.session.session_id)}/export?format=${format}`, {
-          cache: "no-store",
-        });
-        if (!response.ok) {
-          const payload = await response.json();
-          throw new Error(payload.error || "Export failed");
-        }
-        const blob = await response.blob();
-        const disposition = response.headers.get("Content-Disposition") || "";
-        const match = disposition.match(/filename="([^"]+)"/);
-        const fileName = match ? match[1] : `${format}.json`;
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = fileName;
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        URL.revokeObjectURL(url);
-        setStatus(`Exported ${fileName}`);
-      } catch (error) {
-        setStatus(error.message || String(error), true);
-      }
-    }
-
-    async function downloadDeletionExport() {
-      try {
-        const response = await fetch("/api/deletions/export", { cache: "no-store" });
-        if (!response.ok) {
-          const payload = await response.json();
-          throw new Error(payload.error || "Deletion export failed");
-        }
-        const blob = await response.blob();
-        const disposition = response.headers.get("Content-Disposition") || "";
-        const match = disposition.match(/filename=\"([^\"]+)\"/);
-        const fileName = match ? match[1] : "deleted_targets.json";
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = fileName;
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        URL.revokeObjectURL(url);
-        setStatus(`Exported ${fileName}`);
-      } catch (error) {
         setStatus(error.message || String(error), true);
       }
     }
@@ -3447,9 +3471,7 @@
       el.deleteImageBtn.addEventListener("click", handleDeleteImage);
       el.markDifficultBtn.addEventListener("click", handleMarkDifficult);
       el.markBlurryImageBtn.addEventListener("click", handleMarkBlurryImage);
-      el.exportLegacyBtn.addEventListener("click", () => downloadExport("legacy"));
-      el.exportSessionBtn.addEventListener("click", () => downloadExport("session"));
-      el.exportDeletedBtn.addEventListener("click", downloadDeletionExport);
+      el.deleteHistoryBtn.addEventListener("click", handleDeleteSelectedHistories);
       el.canvasWrap.addEventListener("wheel", handleCanvasWheel, { passive: false });
       el.viewer.addEventListener("mousedown", handleCanvasMouseDown);
       el.viewer.addEventListener("contextmenu", (event) => {
