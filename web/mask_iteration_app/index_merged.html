@@ -222,7 +222,6 @@
       cursor: not-allowed;
     }
     #importBtn,
-    #openSessionBtn,
     #iterateBtn,
     #validateRunBtn,
     #exportDeletedBtn {
@@ -651,7 +650,6 @@
           <div class="button-row">
             <button id="prevTargetBtn" type="button">上一个</button>
             <button id="nextTargetBtn" type="button">下一个</button>
-            <button id="openSessionBtn" type="button">打开会话</button>
           </div>
         </div>
 
@@ -866,7 +864,6 @@
       targetSelect: document.getElementById("targetSelect"),
       prevTargetBtn: document.getElementById("prevTargetBtn"),
       nextTargetBtn: document.getElementById("nextTargetBtn"),
-      openSessionBtn: document.getElementById("openSessionBtn"),
       targetSummary: document.getElementById("targetSummary"),
       contextPad: document.getElementById("contextPad"),
       maskOpacity: document.getElementById("maskOpacity"),
@@ -942,6 +939,7 @@
       validateSession: null,
       selectedTargetKey: "",
       pendingNextTargetKey: "",
+      openRequestId: 0,
       session: null,
       compareHistoryId: null,
       image: null,
@@ -1259,7 +1257,6 @@
       const validateAvailable = Boolean(state.bootstrap && state.bootstrap.validate_tools && state.bootstrap.validate_tools.available);
       el.exportWorkDatasetBtn.disabled = !state.currentImageSetId || !state.currentAnnotationStateId || state.busy;
       el.importBtn.disabled = state.busy;
-      el.openSessionBtn.disabled = !state.selectedTargetKey || state.busy;
       el.prevTargetBtn.disabled = !hasTargets || state.busy;
       el.nextTargetBtn.disabled = !hasTargets || state.busy;
       el.iterateBtn.disabled = !hasSession || state.busy;
@@ -2462,6 +2459,7 @@
         applyTargets(payload.recent_targets || [], "最近导入");
         renderValidateSection();
         clearBusy(`Loaded ${state.targets.length} recent targets.`);
+        await openCurrentTarget();
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -2726,6 +2724,7 @@
           ? `Imported ${importedTargets.length} targets. Skipped ${skipped.length} annotation files.`
           : `Imported ${importedTargets.length} targets from the selected folders.`;
         clearBusy(summary);
+        await openCurrentTarget();
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -2841,6 +2840,7 @@
           parts.push([...failed, ...skipped].slice(0, 6).join(" | "));
         }
         clearBusy(parts.join(" "));
+        await openCurrentTarget();
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -2850,15 +2850,20 @@
 
     async function openCurrentTarget() {
       if (!state.selectedTargetKey) return;
+      const requestId = ++state.openRequestId;
+      const targetKey = state.selectedTargetKey;
       state.pendingNextTargetKey = "";
       try {
         setBusy("Opening session and generating initial mask...");
-        await loadImageForTarget(state.selectedTargetKey);
-        const payload = await apiPost("/api/open-session", { target_key: state.selectedTargetKey });
+        await loadImageForTarget(targetKey);
+        if (requestId !== state.openRequestId || targetKey !== state.selectedTargetKey) return;
+        const payload = await apiPost("/api/open-session", { target_key: targetKey });
+        if (requestId !== state.openRequestId || targetKey !== state.selectedTargetKey) return;
         state.autoFitPending = true;
         applySessionPayload(payload);
         clearBusy("Session opened.");
       } catch (error) {
+        if (requestId !== state.openRequestId) return;
         state.busy = false;
         renderButtons();
         setStatus(error.message || String(error), true);
@@ -3418,10 +3423,10 @@
           el.targetSummary.textContent = `目标 ${index + 1} / ${state.filteredTargets.length}`;
         }
         renderButtons();
+        void openCurrentTarget();
       });
       el.prevTargetBtn.addEventListener("click", () => { void gotoRelativeTarget(-1); });
       el.nextTargetBtn.addEventListener("click", () => { void gotoRelativeTarget(1); });
-      el.openSessionBtn.addEventListener("click", openCurrentTarget);
       el.contextPad.addEventListener("input", () => {
         state.autoFitPending = true;
         renderAll();
