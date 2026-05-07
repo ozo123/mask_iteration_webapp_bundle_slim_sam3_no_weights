@@ -50,8 +50,13 @@
       display: grid;
       gap: 12px;
     }
+    .page > *,
+    .grid > *,
+    .layout > *,
+    .panel-heading > * {
+      min-width: 0;
+    }
     .app-header,
-    .workflow-rail,
     .panel {
       background: var(--shell);
       border: 1px solid var(--border);
@@ -72,16 +77,8 @@
       font-weight: 760;
       letter-spacing: 0;
     }
-    .brand-subtitle {
-      margin-top: 6px;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.45;
-      word-break: break-word;
-    }
     .header-metrics,
     .metric-strip,
-    .workflow-rail,
     .button-row,
     .toggle-row,
     .tool-row,
@@ -91,34 +88,6 @@
       gap: 8px;
       flex-wrap: wrap;
       align-items: center;
-    }
-    .workflow-rail {
-      padding: 10px;
-      justify-content: space-between;
-      box-shadow: none;
-    }
-    .flow-step {
-      flex: 1 1 190px;
-      min-height: 48px;
-      padding: 9px 12px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      background: var(--surface);
-      display: grid;
-      gap: 2px;
-    }
-    .flow-step strong {
-      font-size: 12px;
-      line-height: 1.2;
-    }
-    .flow-step span {
-      color: var(--muted);
-      font-size: 11px;
-      line-height: 1.25;
-    }
-    .flow-step.is-live {
-      border-color: rgba(12, 138, 80, 0.42);
-      background: var(--green-soft);
     }
     .panel {
       padding: 12px;
@@ -183,6 +152,7 @@
       font: inherit;
       font-size: 13px;
       line-height: 1.2;
+      min-width: 0;
     }
     input[type="file"] {
       min-height: 36px;
@@ -222,6 +192,7 @@
       cursor: not-allowed;
     }
     #importBtn,
+    #exportWorkDatasetBtn,
     #iterateBtn,
     #validateRunBtn,
     #exportDeletedBtn {
@@ -280,6 +251,29 @@
     .collapsible-content {
       padding: 0 12px 12px;
       border-top: 1px solid var(--border);
+    }
+    .import-export-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 14px;
+      padding-top: 10px;
+      align-items: start;
+    }
+    .import-export-column {
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+    }
+    .import-export-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      align-items: end;
+    }
+    .import-export-action {
+      width: auto;
+      justify-self: start;
+      min-width: 180px;
     }
     .viewer-stack {
       display: grid;
@@ -465,6 +459,9 @@
     .mini-pill {
       padding: 5px 9px;
       background: var(--surface);
+      max-width: 100%;
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .mini-pill.is-green {
       color: var(--green);
@@ -539,6 +536,9 @@
         grid-column: span 2;
       }
       .panel-heading { display: grid; }
+      .import-export-grid,
+      .import-export-row { grid-template-columns: 1fr; }
+      .import-export-action { width: 100%; min-width: 0; }
       .button-row button,
       .toggle-row button,
       .tool-row button { min-width: 0; width: 100%; }
@@ -551,33 +551,11 @@
     <header class="app-header">
       <div>
         <h1 class="brand-title">SAM3 Mask Workbench</h1>
-        <div id="workDatasetSummary" class="brand-subtitle">工作副本: runs/work_dataset/images + annotations + manifests</div>
       </div>
       <div class="header-metrics">
         <span id="queueMetric" class="mini-pill is-blue">队列暂无目标</span>
-        <span id="autosaveSummary" class="mini-pill is-green">COCO segmentation 自动写回</span>
-        <span class="mini-pill">删除操作同步副本</span>
       </div>
     </header>
-
-    <section class="workflow-rail" aria-label="数据处理流程">
-      <div class="flow-step">
-        <strong>1. 导入副本</strong>
-        <span>图片与 JSON 保留原文件名</span>
-      </div>
-      <div class="flow-step">
-        <strong>2. 队列处理</strong>
-        <span>删除后按真实后继目标跳转</span>
-      </div>
-      <div class="flow-step is-live">
-        <strong>3. Mask 写回</strong>
-        <span>当前框保存 COCO RLE segmentation</span>
-      </div>
-      <div class="flow-step">
-        <strong>4. 导出复核</strong>
-        <span>历史、删除记录、Validate 结果集中查看</span>
-      </div>
-    </section>
 
     <section class="panel compact-panel">
       <div class="panel-heading">
@@ -595,38 +573,32 @@
           <details class="collapsible-block">
             <summary>导入文件夹与来源</summary>
             <div class="collapsible-content">
-              <div class="grid" style="padding-top:10px;">
-                <div class="field span-3">
-                  <label for="imageFolderUpload">图片文件夹</label>
-                  <input id="imageFolderUpload" type="file" webkitdirectory directory multiple accept=".jpg,.jpeg,.png,.webp,.bmp">
-                </div>
-                <div class="field span-3">
-                  <label for="annotationFolderUpload">标注文件夹 / 标注副本状态</label>
-                  <input id="annotationFolderUpload" type="file" webkitdirectory directory multiple accept=".json,application/json">
-                </div>
-                <div class="field span-2">
-                  <label for="imageSetNameInput">图片集命名</label>
-                  <input id="imageSetNameInput" type="text" placeholder="默认用图片文件夹名">
-                </div>
-                <div class="field span-2">
-                  <label for="annotationStateNameInput">标注状态命名</label>
-                  <input id="annotationStateNameInput" type="text" placeholder="如 原始/第2轮/复核版">
-                </div>
-                <div class="field span-2">
-                  <label>导入</label>
-                  <div class="button-row">
-                    <button id="importBtn" type="button">导入文件夹</button>
+              <div class="import-export-grid">
+                <div class="import-export-column">
+                  <div class="import-export-row">
+                    <div class="field">
+                      <label for="imageFolderUpload">导入图片文件夹</label>
+                      <input id="imageFolderUpload" type="file" webkitdirectory directory multiple accept=".jpg,.jpeg,.png,.webp,.bmp">
+                    </div>
+                    <div class="field">
+                      <label for="annotationFolderUpload">导入标注文件夹</label>
+                      <input id="annotationFolderUpload" type="file" webkitdirectory directory multiple accept=".json,application/json">
+                    </div>
                   </div>
+                  <button id="importBtn" class="import-export-action" type="button">导入文件夹</button>
                 </div>
-                <div class="field span-4">
-                  <label for="exportDatasetNameInput">导出副本命名</label>
-                  <input id="exportDatasetNameInput" type="text" placeholder="默认用标注状态+时间">
-                </div>
-                <div class="field span-2">
-                  <label>动态副本导出</label>
-                  <div class="button-row">
-                    <button id="exportWorkDatasetBtn" type="button">导出当前副本</button>
+                <div class="import-export-column">
+                  <div class="import-export-row">
+                    <div class="field">
+                      <label for="exportDatasetNameInput">导出副本命名</label>
+                      <input id="exportDatasetNameInput" type="text" placeholder="默认用标注状态+时间">
+                    </div>
+                    <div class="field">
+                      <label for="annotationStateNameInput">状态标注命名</label>
+                      <input id="annotationStateNameInput" type="text" placeholder="如 原始/第2轮/复核版">
+                    </div>
                   </div>
+                  <button id="exportWorkDatasetBtn" class="import-export-action" type="button">导出当前副本</button>
                 </div>
               </div>
             </div>
@@ -849,14 +821,11 @@
     const el = {
       imageFolderUpload: document.getElementById("imageFolderUpload"),
       annotationFolderUpload: document.getElementById("annotationFolderUpload"),
-      imageSetNameInput: document.getElementById("imageSetNameInput"),
       annotationStateNameInput: document.getElementById("annotationStateNameInput"),
       exportDatasetNameInput: document.getElementById("exportDatasetNameInput"),
       exportWorkDatasetBtn: document.getElementById("exportWorkDatasetBtn"),
       importBtn: document.getElementById("importBtn"),
-      workDatasetSummary: document.getElementById("workDatasetSummary"),
       queueMetric: document.getElementById("queueMetric"),
-      autosaveSummary: document.getElementById("autosaveSummary"),
       savedAnnotationSummary: document.getElementById("savedAnnotationSummary"),
       sourceSummary: document.getElementById("sourceSummary"),
       searchInput: document.getElementById("searchInput"),
@@ -1349,23 +1318,17 @@
     }
 
     function renderWorkflowStatus() {
-      const workDataset = (state.bootstrap && state.bootstrap.work_dataset) || {};
-      const workRoot = workDataset.root || "runs/work_dataset";
-      el.workDatasetSummary.textContent = `工作副本: ${workRoot}`;
-
-      const totalCount = state.targets.length;
-      const filteredCount = state.filteredTargets.length;
-      el.queueMetric.textContent = totalCount
-        ? `队列 ${filteredCount} / ${totalCount} 个目标`
+      const queueCount = state.filteredTargets.length;
+      const currentIndex = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
+      el.queueMetric.textContent = queueCount && currentIndex >= 0
+        ? `队列 ${currentIndex + 1} / ${queueCount}`
         : "队列暂无目标";
 
       if (!state.session) {
-        el.autosaveSummary.textContent = "COCO segmentation 自动写回";
         el.savedAnnotationSummary.textContent = "等待打开目标";
         return;
       }
       const target = state.session.target || {};
-      el.autosaveSummary.textContent = `写回 ${target.annotation_file_name || "annotation.json"}`;
       el.savedAnnotationSummary.textContent = `annotation id ${target.annotation_id || "-"} · ${target.image_file_name || "-"}`;
     }
 
@@ -2616,10 +2579,11 @@
     }
 
     async function exportCurrentWorkDatasetCopy() {
-      const imageSetId = state.currentImageSetId || makeImportSessionId((el.imageSetNameInput.value || "").trim());
+      const imageFolderLabel = getSelectedFolderLabel(Array.from(el.imageFolderUpload.files || [])) || "图片文件夹";
+      const imageSetId = state.currentImageSetId || makeImportSessionId(imageFolderLabel);
       const annotationStateId = state.currentAnnotationStateId || makeImportSessionId((el.annotationStateNameInput.value || "").trim());
       if (!imageSetId || !annotationStateId) {
-        setStatus("请先导入或填写图片集命名和标注状态命名。", true);
+        setStatus("请先导入或填写状态标注命名。", true);
         return;
       }
       try {
@@ -2668,7 +2632,7 @@
         const skipped = [];
         const imageFolderLabel = getSelectedFolderLabel(imageFiles) || "图片文件夹";
         const annotationFolderLabel = getSelectedFolderLabel(annotationFiles) || "标注文件夹";
-        const imageSetLabel = (el.imageSetNameInput.value || imageFolderLabel || "图片文件夹").trim();
+        const imageSetLabel = (imageFolderLabel || "图片文件夹").trim();
         const annotationStateLabel = (el.annotationStateNameInput.value || annotationFolderLabel || "标注文件夹").trim();
         const imageSetId = makeImportSessionId(imageSetLabel);
         const annotationStateId = makeImportSessionId(annotationStateLabel);
@@ -2758,7 +2722,7 @@
         const matchedImageNames = new Set();
         const imageFolderLabel = getSelectedFolderLabel(imageFiles) || "图片文件夹";
         const annotationFolderLabel = getSelectedFolderLabel(annotationFiles) || "标注文件夹";
-        const imageSetLabel = (el.imageSetNameInput.value || imageFolderLabel || "图片文件夹").trim();
+        const imageSetLabel = (imageFolderLabel || "图片文件夹").trim();
         const annotationStateLabel = (el.annotationStateNameInput.value || annotationFolderLabel || "标注文件夹").trim();
         const imageSetId = makeImportSessionId(imageSetLabel);
         const annotationStateId = makeImportSessionId(annotationStateLabel);
@@ -3028,6 +2992,7 @@
         state.pendingNextTargetKey = "";
       }
       renderAll();
+      return state.selectedTargetKey || "";
     }
 
     async function handleDeleteTarget() {
@@ -3043,7 +3008,8 @@
           state.bootstrap = payload.bootstrap;
         }
         removeTargetsAndStayNearCurrent((item) => item.key === deletedKey);
-        clearBusy("Current target deleted. Export deletion records when ready.");
+        await openCurrentTarget();
+        clearBusy("Current target deleted. Next target loaded.");
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -3067,7 +3033,8 @@
           state.bootstrap = payload.bootstrap;
         }
         removeTargetsAndStayNearCurrent((item) => deletedKeys.has(item.key));
-        clearBusy(`Current image deleted with ${payload.deleted_target_count || deletedKeys.size} target records.`);
+        await openCurrentTarget();
+        clearBusy(`Current image deleted with ${payload.deleted_target_count || deletedKeys.size} target records. Next target loaded.`);
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -3086,7 +3053,8 @@
           reason: "difficult_segmentation",
         });
         removeTargetsAndStayNearCurrent((item) => item.key === target.key);
-        clearBusy("Marked difficult target and removed it from the current queue.");
+        await openCurrentTarget();
+        clearBusy("Marked difficult target and loaded the next target.");
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -3112,7 +3080,8 @@
           state.bootstrap = payload.bootstrap;
         }
         removeTargetsAndStayNearCurrent((item) => deletedKeys.has(item.key));
-        clearBusy(`Marked blurry image and removed ${payload.deleted_target_count || deletedKeys.size} targets.`);
+        await openCurrentTarget();
+        clearBusy(`Marked blurry image and removed ${payload.deleted_target_count || deletedKeys.size} targets. Next target loaded.`);
       } catch (error) {
         state.busy = false;
         renderButtons();
