@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -16,6 +17,58 @@ from mask_iteration_webapp.service import (
     SessionStore,
     UploadedTargetStore,
 )
+
+
+def torch_available() -> bool:
+    try:
+        __import__("torch")
+        return True
+    except ModuleNotFoundError:
+        return False
+
+
+def should_auto_reexec_conda(torch_available: bool, env_name: str) -> bool:
+    if torch_available:
+        return False
+    if os.environ.get("MASK_ITERATION_SKIP_CONDA_REEXEC") == "1":
+        return False
+    if os.environ.get("CONDA_DEFAULT_ENV") == env_name:
+        return False
+    return True
+
+
+def build_conda_reexec_command(
+    conda_bin: str,
+    env_name: str,
+    script_path: Path,
+    argv: list[str],
+) -> list[str]:
+    return [
+        conda_bin,
+        "run",
+        "--no-capture-output",
+        "-n",
+        env_name,
+        "python",
+        str(script_path),
+        *argv,
+    ]
+
+
+def maybe_reexec_conda_for_torch() -> None:
+    env_name = os.environ.get("CONDA_ENV_NAME", "mask_iteration_sam3")
+    if not should_auto_reexec_conda(torch_available(), env_name):
+        return
+    conda_bin = os.environ.get("CONDA_EXE", "/opt/anaconda3/bin/conda")
+    if not Path(conda_bin).exists():
+        return
+    command = build_conda_reexec_command(conda_bin, env_name, Path(__file__).resolve(), sys.argv[1:])
+    os.environ["MASK_ITERATION_SKIP_CONDA_REEXEC"] = "1"
+    print(
+        f"[bundle] torch is not available in {sys.executable}; restarting with conda env {env_name}...",
+        flush=True,
+    )
+    os.execv(conda_bin, command)
 
 
 def parse_args() -> argparse.Namespace:
@@ -82,6 +135,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    maybe_reexec_conda_for_torch()
     args = parse_args()
     if not args.static_dir.exists():
         raise FileNotFoundError(f"Missing static frontend dir: {args.static_dir}")
