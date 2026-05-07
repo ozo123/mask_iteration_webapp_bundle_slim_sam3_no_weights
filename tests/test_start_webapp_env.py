@@ -1,9 +1,10 @@
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from start_webapp import build_conda_reexec_command, should_auto_reexec_conda
+from start_webapp import build_conda_reexec_command, configure_runtime_environment, should_auto_reexec_conda
 
 
 def test_should_auto_reexec_conda_when_torch_missing_outside_target_env(monkeypatch):
@@ -36,3 +37,9 @@ def test_build_conda_reexec_command_preserves_args():
         "--port",
         "8766",
     ]
+
+
+def test_configure_runtime_environment_sets_mps_fallback(monkeypatch):
+    monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
+    configure_runtime_environment()
+    assert os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] == "1"

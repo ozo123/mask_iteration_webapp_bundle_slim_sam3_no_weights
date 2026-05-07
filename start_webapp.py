@@ -19,6 +19,10 @@ from mask_iteration_webapp.service import (
 )
 
 
+def configure_runtime_environment() -> None:
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+
 def torch_available() -> bool:
     try:
         __import__("torch")
@@ -56,6 +60,7 @@ def build_conda_reexec_command(
 
 
 def maybe_reexec_conda_for_torch() -> None:
+    configure_runtime_environment()
     env_name = os.environ.get("CONDA_ENV_NAME", "mask_iteration_sam3")
     if not should_auto_reexec_conda(torch_available(), env_name):
         return
