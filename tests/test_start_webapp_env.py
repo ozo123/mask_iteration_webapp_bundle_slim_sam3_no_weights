@@ -4,7 +4,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from start_webapp import build_conda_reexec_command, configure_runtime_environment, should_auto_reexec_conda
+from start_webapp import (
+    build_conda_reexec_command,
+    configure_runtime_environment,
+    find_conda_executable,
+    should_auto_reexec_conda,
+)
 
 
 def test_should_auto_reexec_conda_when_torch_missing_outside_target_env(monkeypatch):
@@ -43,3 +48,17 @@ def test_configure_runtime_environment_sets_mps_fallback(monkeypatch):
     monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
     configure_runtime_environment()
     assert os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] == "1"
+
+
+def test_find_conda_executable_prefers_conda_exe_env(monkeypatch, tmp_path):
+    conda = tmp_path / "Scripts" / "conda.exe"
+    conda.parent.mkdir()
+    conda.write_text("", encoding="utf-8")
+    monkeypatch.setenv("CONDA_EXE", str(conda))
+    assert find_conda_executable() == str(conda)
+
+
+def test_find_conda_executable_falls_back_to_path_on_windows(monkeypatch):
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    monkeypatch.setattr("start_webapp.shutil.which", lambda name: "C:/Users/ozo/miniconda3/Scripts/conda.exe" if name == "conda" else None)
+    assert find_conda_executable() == "C:/Users/ozo/miniconda3/Scripts/conda.exe"

@@ -115,9 +115,25 @@ conda activate your_env_name
 
 ### Windows / PowerShell
 
+推荐先运行 Windows 初始化脚本：
+
+```powershell
+.\setup_conda.bat
+```
+
+之后启动：
+
+```powershell
+.\run_conda.bat
+```
+
+也可以手动启动。`start_webapp.py` 会在当前 Python 缺少 `torch` 时自动寻找 conda，并重启到 `mask_iteration_sam3` 环境：
+
 ```powershell
 python start_webapp.py --sam3-repo-dir ".\third_party\sam3" --checkpoint ".\third_party\sam3\checkpoints\sam3.pt" --device auto --validate-tools-dir ".\Validate_tools"
 ```
+
+Windows + NVIDIA 显卡时可以在环境建好后按你的 CUDA 版本替换安装对应的 PyTorch CUDA wheel；没有 NVIDIA/CUDA 时默认 pip 安装的 CPU 版也可以运行，只是会慢。
 
 ### macOS / Linux
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -59,13 +60,42 @@ def build_conda_reexec_command(
     ]
 
 
+def find_conda_executable() -> str | None:
+    candidates: list[str | None] = [
+        os.environ.get("CONDA_EXE"),
+        shutil.which("conda"),
+        "/opt/anaconda3/bin/conda",
+        str(Path.home() / "miniconda3" / "bin" / "conda"),
+        str(Path.home() / "anaconda3" / "bin" / "conda"),
+        str(Path.home() / "miniconda3" / "Scripts" / "conda.exe"),
+        str(Path.home() / "anaconda3" / "Scripts" / "conda.exe"),
+        str(Path.home() / "AppData" / "Local" / "miniconda3" / "Scripts" / "conda.exe"),
+        str(Path.home() / "AppData" / "Local" / "anaconda3" / "Scripts" / "conda.exe"),
+        r"C:\ProgramData\miniconda3\Scripts\conda.exe",
+        r"C:\ProgramData\anaconda3\Scripts\conda.exe",
+    ]
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        if Path(candidate).exists() or candidate.lower().endswith(("conda.exe", "conda.bat")) and candidate == shutil.which("conda"):
+            return candidate
+    return None
+
+
 def maybe_reexec_conda_for_torch() -> None:
     configure_runtime_environment()
     env_name = os.environ.get("CONDA_ENV_NAME", "mask_iteration_sam3")
     if not should_auto_reexec_conda(torch_available(), env_name):
         return
-    conda_bin = os.environ.get("CONDA_EXE", "/opt/anaconda3/bin/conda")
-    if not Path(conda_bin).exists():
+    conda_bin = find_conda_executable()
+    if not conda_bin:
+        print(
+            f"[bundle] torch is not available in {sys.executable}, and conda was not found. "
+            "Install dependencies with setup_conda.sh/setup_conda.bat or activate mask_iteration_sam3.",
+            flush=True,
+        )
         return
     command = build_conda_reexec_command(conda_bin, env_name, Path(__file__).resolve(), sys.argv[1:])
     os.environ["MASK_ITERATION_SKIP_CONDA_REEXEC"] = "1"
