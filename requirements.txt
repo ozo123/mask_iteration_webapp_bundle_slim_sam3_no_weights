@@ -35,3 +35,8 @@ matplotlib>=3.7
 # Optional SAM3 training/eval modules present in the bundle import these.
 submitit>=1.5
 torchmetrics>=1.3
+
+# Additional bundled SAM3 modules imported by image/video/visualization helpers.
+psutil>=5.9
+pandas>=2.0
+scikit-learn>=1.3

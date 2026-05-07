@@ -565,6 +565,8 @@ def _setup_device_and_mode(model, device, eval_mode):
     """Setup model device and evaluation mode."""
     if device == "cuda":
         model = model.cuda()
+    elif device is not None:
+        model = model.to(torch.device(device))
     if eval_mode:
         model.eval()
     return model

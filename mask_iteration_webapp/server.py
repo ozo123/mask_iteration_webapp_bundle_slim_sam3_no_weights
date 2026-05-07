@@ -81,6 +81,12 @@ def create_handler(service, static_dir: Path):
                             annotation_text=str(payload.get("annotation_text", "")),
                             import_session_id=payload.get("import_session_id"),
                             import_session_label=payload.get("import_session_label"),
+                            image_set_id=payload.get("image_set_id"),
+                            image_set_label=payload.get("image_set_label"),
+                            annotation_state_id=payload.get("annotation_state_id"),
+                            annotation_state_label=payload.get("annotation_state_label"),
+                            image_relative_path=payload.get("image_relative_path"),
+                            annotation_relative_path=payload.get("annotation_relative_path"),
                         ),
                     )
 
@@ -98,6 +104,16 @@ def create_handler(service, static_dir: Path):
                         HTTPStatus.OK,
                         category_payload,
                         extra_headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+                    )
+
+                if path == "/api/work-dataset/export":
+                    return self._send_json(
+                        HTTPStatus.OK,
+                        service.export_work_dataset_copy(
+                            image_set_id=str(payload.get("image_set_id", "")),
+                            annotation_state_id=str(payload.get("annotation_state_id", "")),
+                            export_name=payload.get("export_name"),
+                        ),
                     )
 
                 if path.startswith("/api/sessions/") and path.endswith("/points"):
@@ -165,6 +181,20 @@ def create_handler(service, static_dir: Path):
                 if path.startswith("/api/sessions/") and path.endswith("/delete-image"):
                     target_key = unquote(path[len("/api/sessions/") : -len("/delete-image")]).strip("/")
                     return self._send_json(HTTPStatus.OK, service.delete_image(target_key))
+
+                if path.startswith("/api/sessions/") and path.endswith("/mark-difficult"):
+                    target_key = unquote(path[len("/api/sessions/") : -len("/mark-difficult")]).strip("/")
+                    return self._send_json(
+                        HTTPStatus.OK,
+                        service.mark_difficult_target(target_key, reason=payload.get("reason")),
+                    )
+
+                if path.startswith("/api/sessions/") and path.endswith("/mark-blurry-image"):
+                    target_key = unquote(path[len("/api/sessions/") : -len("/mark-blurry-image")]).strip("/")
+                    return self._send_json(
+                        HTTPStatus.OK,
+                        service.mark_blurry_image(target_key, reason=payload.get("reason")),
+                    )
 
                 if path.startswith("/api/sessions/") and path.endswith("/validate-tools/validate"):
                     target_key = unquote(path[len("/api/sessions/") : -len("/validate-tools/validate")]).strip("/")

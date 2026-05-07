@@ -6,60 +6,159 @@
   <title>SAM3 Mask Iteration + Validate Tools</title>
   <style>
     :root {
-      --bg: #091018;
-      --panel: rgba(15, 24, 33, 0.95);
-      --panel-2: #182432;
-      --border: #2d4254;
-      --text: #edf4fb;
-      --muted: #96abc0;
-      --accent: #63d2ff;
-      --accent-2: #7fe3be;
-      --fg: #30d07f;
-      --bgpt: #ff6a59;
-      --warn: #ffd38d;
-      --compare: #ff4f8f;
-      --mask: #00c2ff;
+      --bg: #eef3f7;
+      --shell: #ffffff;
+      --surface: #f7fafc;
+      --surface-strong: #edf3f7;
+      --border: #cbd6df;
+      --border-strong: #9fb0bf;
+      --text: #111923;
+      --muted: #526271;
+      --blue: #0b5fcc;
+      --blue-soft: #e7f0ff;
+      --cyan: #009fb5;
+      --green: #0c8a50;
+      --green-soft: #e8f8ef;
+      --red: #c8352b;
+      --red-soft: #fff0ee;
+      --amber: #b76a12;
+      --amber-soft: #fff5df;
+      --violet: #6742b5;
+      --violet-soft: #f1edff;
+      --mask: #00a7c4;
+      --compare: #d84d88;
+      --fg: #0c8a50;
+      --bgpt: #c8352b;
+      --warn: #b76a12;
+      --radius: 8px;
+      --shadow: 0 18px 42px rgba(20, 35, 52, 0.08);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       color: var(--text);
-      font-family: "Segoe UI", Arial, sans-serif;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
       background:
-        radial-gradient(circle at top left, rgba(99, 210, 255, 0.14), transparent 24%),
-        radial-gradient(circle at bottom right, rgba(242, 186, 82, 0.1), transparent 20%),
-        linear-gradient(180deg, #071019, #0b131d 38%, #091018);
+        linear-gradient(90deg, rgba(17, 25, 35, 0.035) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(17, 25, 35, 0.035) 1px, transparent 1px),
+        var(--bg);
+      background-size: 36px 36px;
     }
     .page {
-      width: min(1620px, calc(100vw - 20px));
-      margin: 6px auto 16px;
+      width: min(1660px, calc(100vw - 28px));
+      margin: 14px auto 20px;
       display: grid;
+      gap: 12px;
+    }
+    .app-header,
+    .workflow-rail,
+    .panel {
+      background: var(--shell);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .app-header {
+      display: grid;
+      grid-template-columns: minmax(300px, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      padding: 18px 20px;
+    }
+    .brand-title {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.12;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+    .brand-subtitle {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+    .header-metrics,
+    .metric-strip,
+    .workflow-rail,
+    .button-row,
+    .toggle-row,
+    .tool-row,
+    .validate-meta,
+    .inline-metrics {
+      display: flex;
       gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .workflow-rail {
+      padding: 10px;
+      justify-content: space-between;
+      box-shadow: none;
+    }
+    .flow-step {
+      flex: 1 1 190px;
+      min-height: 48px;
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      display: grid;
+      gap: 2px;
+    }
+    .flow-step strong {
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .flow-step span {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.25;
+    }
+    .flow-step.is-live {
+      border-color: rgba(12, 138, 80, 0.42);
+      background: var(--green-soft);
     }
     .panel {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 8px;
-      backdrop-filter: blur(12px);
+      padding: 12px;
+    }
+    .compact-panel {
+      padding: 14px;
+    }
+    .panel-heading {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .section-title,
+    .field label,
+    .eyebrow {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      font-weight: 760;
+    }
+    .panel-heading h2 {
+      margin: 4px 0 0;
+      font-size: 19px;
+      line-height: 1.2;
     }
     .grid {
       display: grid;
       grid-template-columns: repeat(12, minmax(0, 1fr));
-      gap: 8px;
+      gap: 10px;
       align-items: end;
     }
     .field {
       display: grid;
       gap: 6px;
-    }
-    .field label,
-    .section-title {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
-      font-weight: 700;
+      min-width: 0;
     }
     .span-2 { grid-column: span 2; }
     .span-3 { grid-column: span 3; }
@@ -77,63 +176,94 @@
     button {
       width: 100%;
       border: 1px solid var(--border);
-      background: var(--panel-2);
+      background: var(--surface);
       color: var(--text);
-      border-radius: 10px;
-      padding: 6px 8px;
+      border-radius: 7px;
+      padding: 8px 10px;
       font: inherit;
       font-size: 13px;
+      line-height: 1.2;
     }
     input[type="file"] {
-      padding: 6px 8px;
+      min-height: 36px;
+    }
+    input[type="range"] {
+      padding: 0;
+      accent-color: var(--blue);
+      background: transparent;
+    }
+    select {
+      min-height: 36px;
+    }
+    textarea {
+      min-height: 72px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.45;
     }
     button {
+      min-height: 36px;
       cursor: pointer;
-      transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+      font-weight: 700;
+      transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+      white-space: nowrap;
     }
     button:hover:not(:disabled) {
-      border-color: rgba(99, 210, 255, 0.45);
+      border-color: var(--blue);
+      background: var(--blue-soft);
       transform: translateY(-1px);
     }
     button:disabled,
     input:disabled,
     select:disabled,
     textarea:disabled {
-      opacity: 0.45;
+      opacity: 0.46;
       cursor: not-allowed;
     }
-    textarea {
-      min-height: 84px;
-      resize: vertical;
-      font-family: Consolas, "Courier New", monospace;
-      font-size: 12px;
-      line-height: 1.5;
+    #importBtn,
+    #openSessionBtn,
+    #iterateBtn,
+    #validateRunBtn,
+    #exportDeletedBtn {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #fff;
+    }
+    #deleteTargetBtn,
+    #deleteImageBtn {
+      border-color: rgba(200, 53, 43, 0.45);
+      background: var(--red-soft);
+      color: var(--red);
+    }
+    #markDifficultBtn,
+    #markBlurryImageBtn {
+      border-color: rgba(183, 106, 18, 0.45);
+      background: var(--amber-soft);
+      color: var(--amber);
     }
     .layout {
       display: grid;
-      grid-template-columns: minmax(0, 1.9fr) minmax(360px, 0.9fr);
-      gap: 10px;
+      grid-template-columns: minmax(0, 1fr) 356px;
+      gap: 12px;
       align-items: start;
-    }
-    .compact-panel {
-      padding: 8px 10px;
     }
     .collapsible-block {
       border: 1px solid var(--border);
-      border-radius: 14px;
-      background: rgba(255,255,255,0.02);
+      border-radius: var(--radius);
+      background: var(--surface);
       overflow: hidden;
     }
     .collapsible-block summary {
       list-style: none;
       cursor: pointer;
-      padding: 8px 10px;
+      padding: 10px 12px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
       color: var(--text);
-      font-weight: 700;
+      font-weight: 760;
       user-select: none;
     }
     .collapsible-block summary::-webkit-details-marker {
@@ -143,29 +273,29 @@
       content: "展开";
       font-size: 12px;
       color: var(--muted);
-      font-weight: 600;
+      font-weight: 700;
     }
     .collapsible-block[open] summary::after {
       content: "收起";
     }
     .collapsible-content {
-      padding: 0 10px 10px;
-      border-top: 1px solid rgba(255,255,255,0.06);
+      padding: 0 12px 12px;
+      border-top: 1px solid var(--border);
     }
     .viewer-stack {
       display: grid;
       gap: 10px;
     }
     .viewer-wrap {
-      min-height: 460px;
-      border: 1px solid var(--border);
-      border-radius: 18px;
+      min-height: 560px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius);
       overflow: hidden;
       position: relative;
       background:
-        linear-gradient(45deg, rgba(255,255,255,0.03) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.03) 75%),
-        linear-gradient(45deg, rgba(255,255,255,0.03) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.03) 75%),
-        #0d131a;
+        linear-gradient(45deg, rgba(255,255,255,0.055) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.055) 75%),
+        linear-gradient(45deg, rgba(255,255,255,0.055) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.055) 75%),
+        #111923;
       background-size: 24px 24px;
       background-position: 0 0, 12px 12px;
     }
@@ -184,9 +314,9 @@
       max-height: none;
       width: auto;
       height: auto;
-      border-radius: 14px;
-      background: #0d1117;
-      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+      border-radius: var(--radius);
+      background: #111923;
+      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
       cursor: grab;
       user-select: none;
     }
@@ -194,55 +324,70 @@
     .status,
     .empty {
       color: var(--muted);
-      line-height: 1.6;
+      line-height: 1.55;
     }
     .status {
-      padding: 10px;
+      padding: 10px 12px;
       border: 1px solid var(--border);
-      border-radius: 12px;
-      background: rgba(255,255,255,0.02);
+      border-radius: var(--radius);
+      background: var(--surface);
+      font-size: 12px;
     }
     .status.warn {
-      border-color: rgba(255, 211, 141, 0.36);
-      background: rgba(255, 211, 141, 0.08);
-      color: #ffeccc;
-    }
-    .button-row,
-    .toggle-row {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      align-items: center;
+      border-color: rgba(183, 106, 18, 0.42);
+      background: var(--amber-soft);
+      color: #71420c;
     }
     .button-row button,
-    .toggle-row button {
+    .toggle-row button,
+    .tool-row button {
       width: auto;
-      min-width: 92px;
+      min-width: 86px;
     }
     .toggle-btn.active-fg {
-      border-color: rgba(48, 208, 127, 0.45);
-      background: rgba(48, 208, 127, 0.16);
+      border-color: rgba(12, 138, 80, 0.48);
+      background: var(--green-soft);
+      color: var(--green);
     }
     .toggle-btn.active-bg {
-      border-color: rgba(255, 106, 89, 0.45);
-      background: rgba(255, 106, 89, 0.16);
+      border-color: rgba(200, 53, 43, 0.48);
+      background: var(--red-soft);
+      color: var(--red);
     }
-    .meta-card {
+    .tool-btn.active-tool {
+      border-color: var(--blue);
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+    .prompt-input {
+      min-height: 64px;
+    }
+    .subtle {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .meta-card,
+    .point-card,
+    .history-card,
+    .stroke-card,
+    .validate-card {
       border: 1px solid var(--border);
-      border-radius: 14px;
-      background: rgba(255,255,255,0.02);
-      padding: 10px;
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 9px 10px;
     }
     .meta-card .k {
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 0.08em;
       color: var(--muted);
+      font-weight: 760;
     }
     .meta-card .v {
       margin-top: 4px;
-      font-size: 14px;
-      font-weight: 700;
+      font-size: 13px;
+      font-weight: 760;
       word-break: break-word;
     }
     .point-list,
@@ -251,25 +396,16 @@
     .validate-list {
       display: grid;
       gap: 8px;
-      max-height: 280px;
+      max-height: 220px;
       overflow: auto;
     }
-    .point-card,
-    .history-card,
-    .stroke-card,
-    .validate-card {
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: rgba(255,255,255,0.02);
-      padding: 8px 10px;
-    }
     .history-card.current {
-      border-color: rgba(99, 210, 255, 0.45);
-      background: rgba(99, 210, 255, 0.1);
+      border-color: rgba(11, 95, 204, 0.5);
+      background: var(--blue-soft);
     }
     .history-card.compare {
-      border-color: rgba(240, 179, 94, 0.45);
-      background: rgba(240, 179, 94, 0.12);
+      border-color: rgba(216, 77, 136, 0.42);
+      background: #fff0f6;
     }
     .point-row,
     .history-row,
@@ -280,40 +416,73 @@
       gap: 10px;
       align-items: center;
     }
-    .tool-row {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .tool-row button {
-      width: auto;
-      min-width: 92px;
-    }
-    .tool-btn.active-tool {
-      border-color: rgba(99, 210, 255, 0.45);
-      background: rgba(99, 210, 255, 0.16);
-    }
-    .prompt-input {
-      min-height: 52px;
-      resize: vertical;
-    }
-    .subtle {
-      color: var(--muted);
-      font-size: 11px;
-      line-height: 1.4;
-    }
-    .count-badge {
+    .count-badge,
+    .nav-pill,
+    .mini-pill,
+    .pill {
       display: inline-flex;
       align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .count-badge {
       justify-content: center;
       min-width: 28px;
-      padding: 3px 8px;
-      border-radius: 999px;
-      background: rgba(99, 210, 255, 0.12);
-      border: 1px solid rgba(99, 210, 255, 0.22);
+      padding: 4px 8px;
+      color: var(--blue);
+      border-color: rgba(11, 95, 204, 0.25);
+      background: var(--blue-soft);
+      font-weight: 760;
+    }
+    .nav-pill {
+      padding: 7px 10px;
       color: var(--text);
+      max-width: 100%;
+      word-break: break-word;
+    }
+    .pill {
+      padding: 5px 9px;
+    }
+    .pill.fg {
+      color: var(--green);
+      border-color: rgba(12, 138, 80, 0.3);
+      background: var(--green-soft);
+    }
+    .pill.bg {
+      color: var(--red);
+      border-color: rgba(200, 53, 43, 0.3);
+      background: var(--red-soft);
+    }
+    .pill.system {
+      color: var(--amber);
+      border-color: rgba(183, 106, 18, 0.3);
+      background: var(--amber-soft);
+    }
+    .mini-pill {
+      padding: 5px 9px;
+      background: var(--surface);
+    }
+    .mini-pill.is-green {
+      color: var(--green);
+      border-color: rgba(12, 138, 80, 0.32);
+      background: var(--green-soft);
+    }
+    .mini-pill.is-blue {
+      color: var(--blue);
+      border-color: rgba(11, 95, 204, 0.32);
+      background: var(--blue-soft);
+    }
+    .small-button {
+      width: auto;
+      min-width: 70px;
+      min-height: 30px;
+      padding: 5px 8px;
       font-size: 12px;
-      font-weight: 700;
     }
     .validate-grid {
       display: grid;
@@ -328,7 +497,7 @@
       margin: 0;
       white-space: pre-wrap;
       word-break: break-word;
-      font-family: Consolas, "Courier New", monospace;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 12px;
       line-height: 1.45;
       color: var(--text);
@@ -340,81 +509,25 @@
     .validate-list .validate-card {
       padding: 10px 12px;
     }
-    .validate-meta {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 8px;
-    }
     .validate-meta .pill {
       font-size: 11px;
     }
     .divider {
       height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.16), transparent);
-      margin: 4px 0 10px;
+      background: var(--border);
+      margin: 8px 0 12px;
     }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 3px 8px;
-      border-radius: 999px;
-      font-size: 12px;
-      border: 1px solid var(--border);
-      color: var(--muted);
+    .empty {
+      padding: 22px;
     }
-    .pill.fg {
-      color: #ddf8e8;
-      border-color: rgba(48, 208, 127, 0.35);
-      background: rgba(48, 208, 127, 0.14);
-    }
-    .pill.bg {
-      color: #ffd9d3;
-      border-color: rgba(255, 106, 89, 0.35);
-      background: rgba(255, 106, 89, 0.14);
-    }
-    .pill.system {
-      color: #fff3d7;
-      border-color: rgba(255, 211, 141, 0.35);
-      background: rgba(255, 211, 141, 0.14);
-    }
-    .nav-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 8px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      color: var(--text);
-      background: rgba(255,255,255,0.03);
-      font-size: 12px;
-    }
-    .small-button {
-      width: auto;
-      min-width: 74px;
-      padding: 5px 8px;
-    }
-    .inline-metrics {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 8px;
-    }
-    .mini-pill {
-      padding: 4px 8px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,0.03);
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .empty { padding: 18px; }
     .hidden { display: none !important; }
     @media (max-width: 1220px) {
+      .app-header { grid-template-columns: 1fr; }
       .layout { grid-template-columns: 1fr; }
+      .viewer-wrap { min-height: 460px; }
     }
-    @media (max-width: 760px) {
+    @media (max-width: 860px) {
+      .page { width: min(100vw - 14px, 1660px); margin-top: 8px; }
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .span-2,
       .span-3,
@@ -426,9 +539,9 @@
       .span-12 {
         grid-column: span 2;
       }
-      .meta-grid { grid-template-columns: 1fr; }
+      .panel-heading { display: grid; }
       .button-row button,
-      .toggle-row button { min-width: 0; width: 100%; }
+      .toggle-row button,
       .tool-row button { min-width: 0; width: 100%; }
       .validate-grid { grid-template-columns: 1fr; }
     }
@@ -436,20 +549,69 @@
 </head>
 <body>
   <div class="page">
+    <header class="app-header">
+      <div>
+        <h1 class="brand-title">SAM3 Mask Workbench</h1>
+        <div id="workDatasetSummary" class="brand-subtitle">工作副本: runs/work_dataset/images + annotations + manifests</div>
+      </div>
+      <div class="header-metrics">
+        <span id="queueMetric" class="mini-pill is-blue">队列暂无目标</span>
+        <span id="autosaveSummary" class="mini-pill is-green">COCO segmentation 自动写回</span>
+        <span class="mini-pill">删除操作同步副本</span>
+      </div>
+    </header>
+
+    <section class="workflow-rail" aria-label="数据处理流程">
+      <div class="flow-step">
+        <strong>1. 导入副本</strong>
+        <span>图片与 JSON 保留原文件名</span>
+      </div>
+      <div class="flow-step">
+        <strong>2. 队列处理</strong>
+        <span>删除后按真实后继目标跳转</span>
+      </div>
+      <div class="flow-step is-live">
+        <strong>3. Mask 写回</strong>
+        <span>当前框保存 COCO RLE segmentation</span>
+      </div>
+      <div class="flow-step">
+        <strong>4. 导出复核</strong>
+        <span>历史、删除记录、Validate 结果集中查看</span>
+      </div>
+    </section>
+
     <section class="panel compact-panel">
+      <div class="panel-heading">
+        <div>
+          <div class="eyebrow">Dataset Control</div>
+          <h2>导入、筛选与当前目标</h2>
+        </div>
+        <div class="metric-strip">
+          <span id="savedAnnotationSummary" class="mini-pill">等待打开目标</span>
+          <span id="sourceSummary" class="nav-pill">等待分别选择图片文件夹和标注文件夹。</span>
+        </div>
+      </div>
       <div class="grid">
         <div class="field span-12">
           <details class="collapsible-block">
             <summary>导入文件夹与来源</summary>
             <div class="collapsible-content">
               <div class="grid" style="padding-top:10px;">
-                <div class="field span-4">
+                <div class="field span-3">
                   <label for="imageFolderUpload">图片文件夹</label>
                   <input id="imageFolderUpload" type="file" webkitdirectory directory multiple accept=".jpg,.jpeg,.png,.webp,.bmp">
                 </div>
-                <div class="field span-4">
-                  <label for="annotationFolderUpload">标注文件夹</label>
+                <div class="field span-3">
+                  <label for="annotationFolderUpload">标注文件夹 / 标注副本状态</label>
                   <input id="annotationFolderUpload" type="file" webkitdirectory directory multiple accept=".json,application/json">
+                </div>
+                <div class="field span-2">
+                  <label for="imageSetNameInput">图片集命名</label>
+                  <input id="imageSetNameInput" type="text" placeholder="默认用图片文件夹名">
+                </div>
+                <div class="field span-2">
+                  <label for="annotationStateNameInput">标注状态命名</label>
+                  <input id="annotationStateNameInput" type="text" placeholder="如 原始/第2轮/复核版">
                 </div>
                 <div class="field span-2">
                   <label>导入</label>
@@ -457,9 +619,15 @@
                     <button id="importBtn" type="button">导入文件夹</button>
                   </div>
                 </div>
+                <div class="field span-4">
+                  <label for="exportDatasetNameInput">导出副本命名</label>
+                  <input id="exportDatasetNameInput" type="text" placeholder="默认用标注状态+时间">
+                </div>
                 <div class="field span-2">
-                  <label for="sourceSummary">当前来源</label>
-                  <div id="sourceSummary" class="nav-pill">等待分别选择图片文件夹和标注文件夹。</div>
+                  <label>动态副本导出</label>
+                  <div class="button-row">
+                    <button id="exportWorkDatasetBtn" type="button">导出当前副本</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -484,7 +652,6 @@
             <button id="prevTargetBtn" type="button">上一个</button>
             <button id="nextTargetBtn" type="button">下一个</button>
             <button id="openSessionBtn" type="button">打开会话</button>
-            <span id="targetSummary" class="nav-pill">暂无目标</span>
           </div>
         </div>
 
@@ -537,7 +704,7 @@
             <button id="commitRegionBtn" class="tool-btn" type="button">固定锁区</button>
             <button id="cancelRegionBtn" class="tool-btn" type="button">取消锁区</button>
           </div>
-          <div class="subtle">闭合锁区: 单击逐点添加顶点。放好 3 个以上顶点后，可回点起点、点击“固定锁区”，或按 Enter 完成；Esc 或“取消锁区”会丢弃当前草稿。</div>
+          <div class="subtle">闭合锁区草稿会跟随当前目标显示。</div>
         </div>
 
         <div class="field span-5">
@@ -547,7 +714,7 @@
             class="prompt-input"
             placeholder="框是必选 prompt。这里可以补充文字描述，例如：black office chair with armrest"
           ></textarea>
-          <div class="subtle">文字描述会和框、点、线条一起参与这一轮迭代。线条会在后端离散成点。</div>
+          <div class="subtle">框、点、线和文字会一起参与当前迭代。</div>
         </div>
 
         <div class="field span-12">
@@ -559,6 +726,8 @@
             <button id="clearLinesBtn" type="button">清空线</button>
             <button id="deleteTargetBtn" type="button">删除当前框</button>
             <button id="deleteImageBtn" type="button">删除整张图</button>
+            <button id="markDifficultBtn" type="button">标记难处理</button>
+            <button id="markBlurryImageBtn" type="button">标记模糊图</button>
             <button id="exportLegacyBtn" type="button">导出旧格式</button>
             <button id="exportSessionBtn" type="button">导出历史数据</button>
             <button id="exportDeletedBtn" type="button">导出删除记录</button>
@@ -567,7 +736,17 @@
       </div>
     </section>
 
-    <section class="panel layout">
+    <section class="panel">
+      <div class="panel-heading">
+        <div>
+          <div class="eyebrow">Mask Editing</div>
+          <h2>画布与提示状态</h2>
+        </div>
+        <div class="metric-strip">
+          <span id="targetSummary" class="nav-pill">暂无目标</span>
+        </div>
+      </div>
+      <div class="layout">
       <div>
         <div class="viewer-stack">
           <div id="canvasWrap" class="viewer-wrap">
@@ -575,7 +754,7 @@
               <canvas id="viewer" hidden></canvas>
             </div>
             <div id="empty" class="empty">
-              先分别选择图片文件夹和标注文件夹，再导入并选择目标框后打开会话。新视图会用整张图做底图，并把当前目标框默认放到画布中心。滚轮缩放；点模式下左键短点击加点；线模式下左键拖出线；平移模式下左键拖动画布。
+              导入图片和标注后，在队列中打开一个目标框。
             </div>
           </div>
           <div id="status" class="status">等待导入图片和标注。</div>
@@ -603,6 +782,7 @@
           <div id="lockedRegionList" class="stroke-list"></div>
         </div>
 
+      </div>
       </div>
     </section>
 
@@ -671,7 +851,15 @@
     const el = {
       imageFolderUpload: document.getElementById("imageFolderUpload"),
       annotationFolderUpload: document.getElementById("annotationFolderUpload"),
+      imageSetNameInput: document.getElementById("imageSetNameInput"),
+      annotationStateNameInput: document.getElementById("annotationStateNameInput"),
+      exportDatasetNameInput: document.getElementById("exportDatasetNameInput"),
+      exportWorkDatasetBtn: document.getElementById("exportWorkDatasetBtn"),
       importBtn: document.getElementById("importBtn"),
+      workDatasetSummary: document.getElementById("workDatasetSummary"),
+      queueMetric: document.getElementById("queueMetric"),
+      autosaveSummary: document.getElementById("autosaveSummary"),
+      savedAnnotationSummary: document.getElementById("savedAnnotationSummary"),
       sourceSummary: document.getElementById("sourceSummary"),
       searchInput: document.getElementById("searchInput"),
       categoryFilter: document.getElementById("categoryFilter"),
@@ -704,6 +892,8 @@
       clearLinesBtn: document.getElementById("clearLinesBtn"),
       deleteTargetBtn: document.getElementById("deleteTargetBtn"),
       deleteImageBtn: document.getElementById("deleteImageBtn"),
+      markDifficultBtn: document.getElementById("markDifficultBtn"),
+      markBlurryImageBtn: document.getElementById("markBlurryImageBtn"),
       exportLegacyBtn: document.getElementById("exportLegacyBtn"),
       exportSessionBtn: document.getElementById("exportSessionBtn"),
       exportDeletedBtn: document.getElementById("exportDeletedBtn"),
@@ -747,8 +937,11 @@
       targets: [],
       filteredTargets: [],
       targetSourceLabel: "最近导入",
+      currentImageSetId: "",
+      currentAnnotationStateId: "",
       validateSession: null,
       selectedTargetKey: "",
+      pendingNextTargetKey: "",
       session: null,
       compareHistoryId: null,
       image: null,
@@ -1008,6 +1201,7 @@
     function applyTargets(targets, sourceLabel) {
       state.targets = Array.isArray(targets) ? targets.slice() : [];
       state.targetSourceLabel = sourceLabel || "最近导入";
+      state.pendingNextTargetKey = "";
       state.categoryExportPrompted.clear();
       if (!state.targets.length) {
         state.selectedTargetKey = "";
@@ -1063,6 +1257,7 @@
       const hasRegionDraft = Boolean(state.drawingRegion.active && state.drawingRegion.points.length);
       const canCommitRegion = Boolean(hasRegionDraft && normalizeRegionPointsForSave(state.drawingRegion.points || []));
       const validateAvailable = Boolean(state.bootstrap && state.bootstrap.validate_tools && state.bootstrap.validate_tools.available);
+      el.exportWorkDatasetBtn.disabled = !state.currentImageSetId || !state.currentAnnotationStateId || state.busy;
       el.importBtn.disabled = state.busy;
       el.openSessionBtn.disabled = !state.selectedTargetKey || state.busy;
       el.prevTargetBtn.disabled = !hasTargets || state.busy;
@@ -1083,6 +1278,8 @@
       el.cancelRegionBtn.disabled = !hasSession || state.busy || !hasRegionDraft;
       el.deleteTargetBtn.disabled = !hasSession || state.busy;
       el.deleteImageBtn.disabled = !hasSession || state.busy;
+      el.markDifficultBtn.disabled = !hasSession || state.busy;
+      el.markBlurryImageBtn.disabled = !hasSession || state.busy;
       el.exportDeletedBtn.disabled = !state.bootstrap || state.busy;
       el.validateRunBtn.disabled = !hasSession || state.busy || !validateAvailable;
     }
@@ -1124,6 +1321,7 @@
         el.targetSelect.appendChild(option);
         state.selectedTargetKey = "";
         el.targetSummary.textContent = "暂无目标";
+        renderWorkflowStatus();
         renderButtons();
         return;
       }
@@ -1142,6 +1340,7 @@
       el.targetSelect.value = state.selectedTargetKey;
       const index = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
       el.targetSummary.textContent = `目标 ${index + 1} / ${state.filteredTargets.length}`;
+      renderWorkflowStatus();
       renderButtons();
     }
 
@@ -1150,6 +1349,27 @@
       el.sourceSummary.textContent = count
         ? `${state.targetSourceLabel}，共 ${count} 个目标框`
         : "等待分别选择图片文件夹和标注文件夹。";
+    }
+
+    function renderWorkflowStatus() {
+      const workDataset = (state.bootstrap && state.bootstrap.work_dataset) || {};
+      const workRoot = workDataset.root || "runs/work_dataset";
+      el.workDatasetSummary.textContent = `工作副本: ${workRoot}`;
+
+      const totalCount = state.targets.length;
+      const filteredCount = state.filteredTargets.length;
+      el.queueMetric.textContent = totalCount
+        ? `队列 ${filteredCount} / ${totalCount} 个目标`
+        : "队列暂无目标";
+
+      if (!state.session) {
+        el.autosaveSummary.textContent = "COCO segmentation 自动写回";
+        el.savedAnnotationSummary.textContent = "等待打开目标";
+        return;
+      }
+      const target = state.session.target || {};
+      el.autosaveSummary.textContent = `写回 ${target.annotation_file_name || "annotation.json"}`;
+      el.savedAnnotationSummary.textContent = `annotation id ${target.annotation_id || "-"} · ${target.image_file_name || "-"}`;
     }
 
     function describeValidateReviewMode(mode) {
@@ -2114,6 +2334,7 @@
       toggleModeButtons();
       toggleToolButtons();
       renderSourceSummary();
+      renderWorkflowStatus();
       renderButtons();
       renderMeta();
       renderPointList();
@@ -2332,14 +2553,7 @@
     }
 
     function makeImportSessionId(folderLabel) {
-      const now = new Date();
-      const pad = (value) => String(value).padStart(2, "0");
-      const stamp = [
-        now.getFullYear(),
-        pad(now.getMonth() + 1),
-        pad(now.getDate()),
-      ].join("") + "_" + [pad(now.getHours()), pad(now.getMinutes()), pad(now.getSeconds())].join("");
-      return `${sanitizeSessionComponent(folderLabel)}_${stamp}_session`;
+      return `${sanitizeSessionComponent(folderLabel)}_work_dataset`;
     }
 
     function buildImageFileIndex(files) {
@@ -2403,6 +2617,36 @@
       return null;
     }
 
+    async function exportCurrentWorkDatasetCopy() {
+      const imageSetId = state.currentImageSetId || makeImportSessionId((el.imageSetNameInput.value || "").trim());
+      const annotationStateId = state.currentAnnotationStateId || makeImportSessionId((el.annotationStateNameInput.value || "").trim());
+      if (!imageSetId || !annotationStateId) {
+        setStatus("请先导入或填写图片集命名和标注状态命名。", true);
+        return;
+      }
+      try {
+        setBusy("Exporting current work dataset copy...");
+        const payload = await apiPost("/api/work-dataset/export", {
+          image_set_id: imageSetId,
+          annotation_state_id: annotationStateId,
+          export_name: el.exportDatasetNameInput.value || "",
+        });
+        const pairing = payload.pairing || {};
+        const warnings = [];
+        if ((pairing.missing_annotation_files || []).length) {
+          warnings.push(`无标注图片 ${pairing.missing_annotation_files.length}`);
+        }
+        if ((pairing.missing_image_files || []).length) {
+          warnings.push(`无图片标注 ${pairing.missing_image_files.length}`);
+        }
+        clearBusy(`动态副本已导出: ${payload.export_root}${warnings.length ? `；配对警告：${warnings.join("，")}` : ""}`);
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
     async function importCurrentFolders() {
       const imageFiles = Array.from((el.imageFolderUpload.files || []));
       const annotationFiles = Array.from((el.annotationFolderUpload.files || []))
@@ -2426,8 +2670,12 @@
         const skipped = [];
         const imageFolderLabel = getSelectedFolderLabel(imageFiles) || "图片文件夹";
         const annotationFolderLabel = getSelectedFolderLabel(annotationFiles) || "标注文件夹";
-        const importSessionId = makeImportSessionId(imageFolderLabel);
-        const importSessionLabel = `${imageFolderLabel}_${importSessionId.split("_").slice(-3).join("_")}`;
+        const imageSetLabel = (el.imageSetNameInput.value || imageFolderLabel || "图片文件夹").trim();
+        const annotationStateLabel = (el.annotationStateNameInput.value || annotationFolderLabel || "标注文件夹").trim();
+        const imageSetId = makeImportSessionId(imageSetLabel);
+        const annotationStateId = makeImportSessionId(annotationStateLabel);
+        const importSessionId = annotationStateId;
+        const importSessionLabel = `图片: ${imageSetLabel} | 标注状态: ${annotationStateLabel}`;
 
         for (let index = 0; index < annotationFiles.length; index += 1) {
           const annotationFile = annotationFiles[index];
@@ -2454,6 +2702,12 @@
             annotation_text: annotationText,
             import_session_id: importSessionId,
             import_session_label: importSessionLabel,
+            image_set_id: imageSetId,
+            image_set_label: imageSetLabel,
+            annotation_state_id: annotationStateId,
+            annotation_state_label: annotationStateLabel,
+            image_relative_path: imageFile.webkitRelativePath || imageFile.name,
+            annotation_relative_path: annotationFile.webkitRelativePath || annotationFile.name,
           });
           importedTargets.push(...(payload.targets || []));
         }
@@ -2462,9 +2716,11 @@
           throw new Error(skipped.length ? skipped.join("；") : "没有成功导入任何目标。");
         }
 
+        state.currentImageSetId = imageSetId;
+        state.currentAnnotationStateId = annotationStateId;
         applyTargets(
           importedTargets,
-          `图片: ${imageFolderLabel} | 标注: ${annotationFolderLabel} | ${annotationFiles.length} 个标注文件`
+          `图片: ${imageSetLabel} | 标注状态: ${annotationStateLabel} | ${annotationFiles.length} 个标注文件`
         );
         const summary = skipped.length
           ? `Imported ${importedTargets.length} targets. Skipped ${skipped.length} annotation files.`
@@ -2500,10 +2756,15 @@
         const importedTargets = [];
         const skipped = [];
         const failed = [];
+        const matchedImageNames = new Set();
         const imageFolderLabel = getSelectedFolderLabel(imageFiles) || "图片文件夹";
         const annotationFolderLabel = getSelectedFolderLabel(annotationFiles) || "标注文件夹";
-        const importSessionId = makeImportSessionId(imageFolderLabel);
-        const importSessionLabel = `${imageFolderLabel}_${importSessionId.split("_").slice(-3).join("_")}`;
+        const imageSetLabel = (el.imageSetNameInput.value || imageFolderLabel || "图片文件夹").trim();
+        const annotationStateLabel = (el.annotationStateNameInput.value || annotationFolderLabel || "标注文件夹").trim();
+        const imageSetId = makeImportSessionId(imageSetLabel);
+        const annotationStateId = makeImportSessionId(annotationStateLabel);
+        const importSessionId = annotationStateId;
+        const importSessionLabel = `图片: ${imageSetLabel} | 标注状态: ${annotationStateLabel}`;
 
         for (let index = 0; index < annotationFiles.length; index += 1) {
           const annotationFile = annotationFiles[index];
@@ -2524,6 +2785,7 @@
               skipped.push(`${annotationFile.name}: 找不到对应图片`);
               continue;
             }
+            matchedImageNames.add(getBaseName(imageFile.name));
             const imageDataUrl = await readFileAsDataUrl(imageFile);
             const payload = await apiPost("/api/import-targets", {
               image_file_name: imageFile.name,
@@ -2532,6 +2794,12 @@
               annotation_text: annotationText,
               import_session_id: importSessionId,
               import_session_label: importSessionLabel,
+              image_set_id: imageSetId,
+              image_set_label: imageSetLabel,
+              annotation_state_id: annotationStateId,
+              annotation_state_label: annotationStateLabel,
+              image_relative_path: imageFile.webkitRelativePath || imageFile.name,
+              annotation_relative_path: annotationFile.webkitRelativePath || annotationFile.name,
             });
             importedTargets.push(...(payload.targets || []));
           } catch (error) {
@@ -2539,14 +2807,27 @@
           }
         }
 
+        const unmatchedImages = imageFiles
+          .map((file) => getBaseName(file.name))
+          .filter((name) => isImageFileName(name) && !matchedImageNames.has(name));
+        if (unmatchedImages.length) {
+          failed.push(`图片未找到对应标注 ${unmatchedImages.length} 个: ${unmatchedImages.slice(0, 8).join(", ")}`);
+        }
+        const imageCount = imageFiles.filter((file) => isImageFileName(getBaseName(file.name))).length;
+        if (imageCount !== matchedImageNames.size || annotationFiles.length !== matchedImageNames.size) {
+          failed.push(`配对数量不一致：图片 ${imageCount}，标注 ${annotationFiles.length}，成功配对 ${matchedImageNames.size}`);
+        }
+
         if (!importedTargets.length) {
           const details = [...failed, ...skipped].slice(0, 10).join(" | ");
           throw new Error(details || "没有成功导入任何目标。");
         }
 
+        state.currentImageSetId = imageSetId;
+        state.currentAnnotationStateId = annotationStateId;
         applyTargets(
           importedTargets,
-          `图片: ${imageFolderLabel} | 标注: ${annotationFolderLabel} | ${annotationFiles.length} 个标注文件`
+          `图片: ${imageSetLabel} | 标注状态: ${annotationStateLabel} | ${annotationFiles.length} 个标注文件`
         );
 
         const parts = [`Imported ${importedTargets.length} targets from the selected folders.`];
@@ -2569,6 +2850,7 @@
 
     async function openCurrentTarget() {
       if (!state.selectedTargetKey) return;
+      state.pendingNextTargetKey = "";
       try {
         setBusy("Opening session and generating initial mask...");
         await loadImageForTarget(state.selectedTargetKey);
@@ -2598,6 +2880,22 @@
 
     async function gotoRelativeTarget(offset) {
       if (!state.filteredTargets.length) return;
+      if (offset <= 0) {
+        state.pendingNextTargetKey = "";
+      }
+      if (offset > 0 && state.pendingNextTargetKey) {
+        const pendingKey = state.pendingNextTargetKey;
+        state.pendingNextTargetKey = "";
+        if (state.filteredTargets.some((item) => item.key === pendingKey)) {
+          state.selectedTargetKey = pendingKey;
+          el.targetSelect.value = state.selectedTargetKey;
+          const pendingIndex = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
+          el.targetSummary.textContent = `目标 ${pendingIndex + 1} / ${state.filteredTargets.length}`;
+          renderButtons();
+          await openCurrentTarget();
+          return;
+        }
+      }
       const index = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
       const nextIndex = clamp(index + offset, 0, state.filteredTargets.length - 1);
       if (index === nextIndex && state.session && state.session.session_id === state.selectedTargetKey) {
@@ -2694,6 +2992,39 @@
       }
     }
 
+    function removeTargetsAndStayNearCurrent(shouldRemove) {
+      const currentKey = state.selectedTargetKey;
+      const previousFilteredTargets = state.filteredTargets.slice();
+      const currentIndex = Math.max(0, previousFilteredTargets.findIndex((item) => item.key === currentKey));
+      const nextForwardTarget = previousFilteredTargets
+        .slice(currentIndex + 1)
+        .find((item) => !shouldRemove(item));
+      const previousTarget = previousFilteredTargets
+        .slice(0, currentIndex)
+        .reverse()
+        .find((item) => !shouldRemove(item));
+      state.targets = (state.targets || []).filter((item) => !shouldRemove(item));
+      state.session = null;
+      state.validateSession = null;
+      state.compareHistoryId = null;
+      state.image = null;
+      state.maskCache.clear();
+      renderCategoryFilter();
+      renderTargetList();
+      if (state.filteredTargets.length) {
+        const nextKey = nextForwardTarget ? nextForwardTarget.key : "";
+        const fallbackKey = nextKey || (previousTarget ? previousTarget.key : state.filteredTargets[Math.min(currentIndex, state.filteredTargets.length - 1)].key);
+        state.pendingNextTargetKey = nextKey || fallbackKey || "";
+        state.selectedTargetKey = fallbackKey;
+        const nextIndex = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
+        el.targetSelect.value = state.selectedTargetKey;
+        el.targetSummary.textContent = `目标 ${nextIndex + 1} / ${state.filteredTargets.length}`;
+      } else {
+        state.pendingNextTargetKey = "";
+      }
+      renderAll();
+    }
+
     async function handleDeleteTarget() {
       if (!state.session) return;
       const target = state.session.target;
@@ -2706,8 +3037,7 @@
         if (payload.bootstrap) {
           state.bootstrap = payload.bootstrap;
         }
-        const remainingTargets = (state.targets || []).filter((item) => item.key !== deletedKey);
-        applyTargets(remainingTargets, state.targetSourceLabel);
+        removeTargetsAndStayNearCurrent((item) => item.key === deletedKey);
         clearBusy("Current target deleted. Export deletion records when ready.");
       } catch (error) {
         state.busy = false;
@@ -2731,14 +3061,53 @@
         if (payload.bootstrap) {
           state.bootstrap = payload.bootstrap;
         }
-        const remainingTargets = (state.targets || []).filter((item) => !deletedKeys.has(item.key));
-        state.session = null;
-        state.validateSession = null;
-        state.compareHistoryId = null;
-        state.image = null;
-        applyTargets(remainingTargets, state.targetSourceLabel);
-        renderAll();
+        removeTargetsAndStayNearCurrent((item) => deletedKeys.has(item.key));
         clearBusy(`Current image deleted with ${payload.deleted_target_count || deletedKeys.size} target records.`);
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function handleMarkDifficult() {
+      if (!state.session) return;
+      const target = state.session.target;
+      const ok = window.confirm(`标记当前框为难处理？\n${target.category_name} | ${target.annotation_id}`);
+      if (!ok) return;
+      try {
+        setBusy("Marking difficult target...");
+        await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/mark-difficult`, {
+          reason: "difficult_segmentation",
+        });
+        removeTargetsAndStayNearCurrent((item) => item.key === target.key);
+        clearBusy("Marked difficult target and removed it from the current queue.");
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function handleMarkBlurryImage() {
+      if (!state.session) return;
+      const target = state.session.target;
+      const sameImageCount = (state.targets || [])
+        .filter((item) => item.image_file_name === target.image_file_name && item.import_id === target.import_id)
+        .length;
+      const ok = window.confirm(`标记整张图为模糊图，并移除这张图的所有框？\n${target.image_file_name}\n当前列表中匹配 ${sameImageCount || 1} 个目标。`);
+      if (!ok) return;
+      try {
+        setBusy("Marking blurry image...");
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/mark-blurry-image`, {
+          reason: "blurry_image",
+        });
+        const deletedKeys = new Set(payload.deleted_target_keys || []);
+        if (payload.bootstrap) {
+          state.bootstrap = payload.bootstrap;
+        }
+        removeTargetsAndStayNearCurrent((item) => deletedKeys.has(item.key));
+        clearBusy(`Marked blurry image and removed ${payload.deleted_target_count || deletedKeys.size} targets.`);
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -3032,6 +3401,7 @@
 
     function bindEvents() {
       el.importBtn.addEventListener("click", importCurrentFoldersSafe);
+      el.exportWorkDatasetBtn.addEventListener("click", exportCurrentWorkDatasetCopy);
       el.searchInput.addEventListener("input", () => {
         renderTargetList();
         renderSourceSummary();
@@ -3041,6 +3411,7 @@
         renderButtons();
       });
       el.targetSelect.addEventListener("change", () => {
+        state.pendingNextTargetKey = "";
         state.selectedTargetKey = el.targetSelect.value;
         const index = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
         if (index >= 0) {
@@ -3100,6 +3471,8 @@
       el.clearLinesBtn.addEventListener("click", handleClearLines);
       el.deleteTargetBtn.addEventListener("click", handleDeleteTarget);
       el.deleteImageBtn.addEventListener("click", handleDeleteImage);
+      el.markDifficultBtn.addEventListener("click", handleMarkDifficult);
+      el.markBlurryImageBtn.addEventListener("click", handleMarkBlurryImage);
       el.exportLegacyBtn.addEventListener("click", () => downloadExport("legacy"));
       el.exportSessionBtn.addEventListener("click", () => downloadExport("session"));
       el.exportDeletedBtn.addEventListener("click", downloadDeletionExport);

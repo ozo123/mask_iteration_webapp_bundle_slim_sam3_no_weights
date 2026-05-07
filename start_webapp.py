@@ -27,8 +27,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--imports-root",
         type=Path,
-        default=PROJECT_ROOT / "runs" / "imports",
-        help="Directory where uploaded source images and annotation manifests are stored.",
+        default=PROJECT_ROOT / "runs" / "work_dataset",
+        help="Directory where uploaded image and annotation working copies are maintained.",
     )
     parser.add_argument(
         "--sessions-root",
@@ -105,7 +105,7 @@ def main() -> None:
     )
 
     readiness = inference_service.readiness()
-    print(f"[bundle] imports root: {args.imports_root.resolve()}")
+    print(f"[bundle] work dataset root: {args.imports_root.resolve()}")
     print(f"[bundle] sessions root: {args.sessions_root.resolve()}")
     print(f"[bundle] SAM3 repo exists: {readiness['repo_exists']}")
     print(f"[bundle] SAM3 checkpoint: {readiness['checkpoint']}")

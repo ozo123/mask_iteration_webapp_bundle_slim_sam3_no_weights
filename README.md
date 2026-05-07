@@ -2,9 +2,28 @@
 
 这个精简包已经包含 webapp 和 SAM3 运行所需源码，但不包含 SAM3 权重文件，也不包含历史上传数据。
 
+导入图片和标注后，程序会维护一份工作副本，而不是直接改原始上传文件。默认工作副本位置是：
+
+```text
+runs/work_dataset/
+  images/
+  annotations/
+  manifests/
+```
+
+图片和标注 JSON 会尽量保持原文件名。mask 迭代、删除框、删除整张图等网站操作会实时写到这份工作副本里；COCO 格式标注会在原 annotation 对象中补充 `segmentation`、`area`、`iscrowd`，并保留原有文件名和其他字段。
+
 ## 1. 安装依赖
 
-先创建虚拟环境，然后安装这个包的依赖：
+推荐使用项目自带的 conda 初始化脚本：
+
+```bash
+./setup_conda.sh
+```
+
+脚本会创建或更新 `mask_iteration_sam3` 环境，安装 PyTorch、SAM3、Validate_tools 相关依赖，并把桌面上的 `sam3.pt` 放到项目默认 checkpoint 位置。
+
+如果手动配置，先创建虚拟环境，然后安装这个包的依赖：
 
 ```bash
 pip install -r requirements.txt
@@ -74,6 +93,14 @@ python start_webapp.py --sam3-repo-dir ".\third_party\sam3" --checkpoint ".\thir
 ```
 
 ### macOS / Linux
+
+如果已经运行过 `./setup_conda.sh`，直接启动：
+
+```bash
+./run_conda.sh
+```
+
+也可以手动启动：
 
 ```bash
 python start_webapp.py --sam3-repo-dir ./third_party/sam3 --checkpoint ./third_party/sam3/checkpoints/sam3.pt --device auto --validate-tools-dir ./Validate_tools

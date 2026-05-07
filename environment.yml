@@ -1,0 +1,11 @@
+name: mask_iteration_sam3
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - torch
+      - torchvision
+      - -r requirements.txt
+      - -e ./third_party/sam3
