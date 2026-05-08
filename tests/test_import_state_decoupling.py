@@ -8,7 +8,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mask_iteration_webapp.service import RUN_COCO_DIR, RUN_KEEP_DIR, UploadedTargetStore
+from mask_iteration_webapp.service import RUN_COCO_DIR, RUN_KEEP_DIR, RUN_STATE_DIR, UploadedTargetStore
 
 
 def _png_data_url(color="white"):
@@ -203,3 +203,115 @@ def test_saved_state_import_reuses_original_coco_file_name(tmp_path):
     assert imported["targets"][0]["annotation_file_name"] == "ann.json"
     assert (tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_COCO_DIR / "ann.json").exists()
     assert not (tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_COCO_DIR / "ann__101.json").exists()
+
+
+def test_coco_import_creates_one_image_state_file_with_all_targets(tmp_path):
+    store = UploadedTargetStore(tmp_path / "runs")
+    coco = _coco(101)
+    coco["annotations"].append({"id": 102, "image_id": 1, "category_id": 1, "bbox": [4, 4, 3, 3]})
+
+    store.import_bundle(
+        image_file_name="a.png",
+        image_data_url=_png_data_url("white"),
+        annotation_file_name="ann.json",
+        annotation_text=json.dumps(coco),
+        image_set_id="copy_a",
+        annotation_state_id="copy_a",
+    )
+
+    state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state_payload["format"] == "mask_iteration_state"
+    assert [item["annotation_id"] for item in state_payload["targets"]] == ["101", "102"]
+    assert state_payload["sessions"] == []
+
+
+def test_image_state_import_restores_all_targets_and_sessions(tmp_path):
+    store = UploadedTargetStore(tmp_path / "runs")
+    session_one = _state_payload(annotation_id="101")["session"]
+    session_two = _state_payload(annotation_id="102")["session"]
+    session_two["session_id"] = "old_key_2"
+    session_two["target"]["key"] = "old_key_2"
+    session_two["target"]["annotation_id"] = "102"
+    session_two["target"]["source_annotation_id"] = "102"
+    session_two["target"]["bbox_xywh"] = [4, 4, 3, 3]
+    session_two["target"]["bbox_xyxy"] = [4, 4, 7, 7]
+    image_state = {
+        "schema_version": 3,
+        "format": "mask_iteration_state",
+        "image_file_name": "a.png",
+        "coco_file_name": "ann.json",
+        "coco_payload": _coco(101),
+        "targets": [session_one["target"], session_two["target"]],
+        "sessions": [session_one, session_two],
+    }
+
+    imported = store.import_bundle(
+        image_file_name="a.png",
+        image_data_url=_png_data_url("white"),
+        annotation_file_name="a.state.json",
+        annotation_text=json.dumps(image_state),
+        image_set_id="copy_b",
+        annotation_state_id="copy_b",
+    )
+
+    assert len(imported["targets"]) == 2
+    assert len(imported["restored_sessions"]) == 2
+    assert {item["target"]["annotation_id"] for item in imported["restored_sessions"]} == {"101", "102"}
+    assert (tmp_path / "runs" / "copy_b" / "annotations" / RUN_KEEP_DIR / RUN_COCO_DIR / "ann.json").exists()
+
+
+def test_recent_targets_returns_all_targets_by_default(tmp_path):
+    store = UploadedTargetStore(tmp_path / "runs")
+    annotations = [
+        {"id": index + 1, "image_id": 1, "category_id": 1, "bbox": [1, 1, 4, 4]}
+        for index in range(250)
+    ]
+    coco = {
+        "images": [{"id": 1, "file_name": "a.png", "width": 10, "height": 10}],
+        "annotations": annotations,
+        "categories": [{"id": 1, "name": "box"}],
+    }
+
+    store.import_bundle(
+        image_file_name="a.png",
+        image_data_url=_png_data_url("white"),
+        annotation_file_name="ann.json",
+        annotation_text=json.dumps(coco),
+        image_set_id="copy_a",
+        annotation_state_id="copy_a",
+    )
+
+    assert len(store.recent_targets()) == 250
+
+
+def test_batch_import_persists_manifest_once_per_copy(tmp_path):
+    store = UploadedTargetStore(tmp_path / "runs")
+    persist_calls = []
+    original_persist = store._persist_manifest_payload
+
+    def spy_persist(import_id, manifest_payload):
+        persist_calls.append(import_id)
+        original_persist(import_id, manifest_payload)
+
+    store._persist_manifest_payload = spy_persist
+    items = [
+        {
+            "image_file_name": f"a_{index}.png",
+            "image_data_url": _png_data_url("white"),
+            "annotation_file_name": f"ann_{index}.json",
+            "annotation_text": json.dumps(_coco(annotation_id=index + 1, image_name=f"a_{index}.png")),
+            "image_set_id": "copy_a",
+            "annotation_state_id": "copy_a",
+        }
+        for index in range(3)
+    ]
+
+    imported = store.import_bundles(items)
+
+    manifest_path = tmp_path / "runs" / "copy_a" / "manifest.json"
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert imported["ok"] is True
+    assert len(imported["targets"]) == 3
+    assert len(manifest_payload["targets"]) == 3
+    assert persist_calls == ["copy_a"]

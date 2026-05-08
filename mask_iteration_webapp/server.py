@@ -70,6 +70,12 @@ def create_handler(service, static_dir: Path):
                         ),
                     )
 
+                if path == "/api/import-targets/batch":
+                    return self._send_json(
+                        HTTPStatus.OK,
+                        service.import_targets_batch(payload.get("items")),
+                    )
+
                 if path == "/api/open-session":
                     target_key = str(payload.get("target_key", "")).strip()
                     return self._send_json(HTTPStatus.OK, service.open_session(target_key))

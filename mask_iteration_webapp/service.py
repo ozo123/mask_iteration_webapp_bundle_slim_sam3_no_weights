@@ -372,9 +372,8 @@ class UploadedTargetStore:
 
     def state_output_path(self, target: TargetRecord, deleted: bool = False) -> Path:
         status = RUN_DELETE_DIR if deleted else RUN_KEEP_DIR
-        annotation_stem = sanitize_component(Path(target.annotation_file_name).stem or Path(target.image_file_name).stem)
-        annotation_id = sanitize_component(str(target.source_annotation_id or target.annotation_id or target.result_index))
-        return self.run_annotations_dir(target.import_id, status=status, kind=RUN_STATE_DIR) / f"{annotation_stem}__{annotation_id}.json"
+        image_stem = sanitize_component(Path(target.image_file_name).stem or Path(target.annotation_file_name).stem)
+        return self.run_annotations_dir(target.import_id, status=status, kind=RUN_STATE_DIR) / f"{image_stem}.json"
 
     def deleted_image_path(self, target: TargetRecord) -> Path:
         return self.run_images_dir(target.import_id, status=RUN_DELETE_DIR) / Path(target.image_file_name).name
@@ -466,7 +465,7 @@ class UploadedTargetStore:
             ]
         )
 
-    def recent_targets(self, limit: int = 200) -> list[TargetRecord]:
+    def recent_targets(self) -> list[TargetRecord]:
         imports = sorted(
             self._imports_by_id.values(),
             key=lambda item: str(item.get("imported_at") or ""),
@@ -481,18 +480,33 @@ class UploadedTargetStore:
                     continue
                 seen_identities.add(identity)
                 targets.append(target)
-                if len(targets) >= limit:
-                    return targets[:limit]
-        return targets[:limit]
+        return targets
 
     @staticmethod
     def _is_state_annotation_payload(payload: dict[str, Any]) -> bool:
-        if payload.get("format") == STATE_EXPORT_FORMAT and isinstance(payload.get("session"), dict):
+        if payload.get("format") == STATE_EXPORT_FORMAT and (
+            isinstance(payload.get("session"), dict)
+            or isinstance(payload.get("sessions"), list)
+            or isinstance(payload.get("targets"), list)
+        ):
             return True
         return (
             isinstance(payload.get("session"), dict)
             and isinstance(payload["session"].get("history"), list)
             and isinstance(payload["session"].get("target"), dict)
+        )
+
+    @staticmethod
+    def _state_target_identity(target_payload: dict[str, Any]) -> str:
+        return "|".join(
+            [
+                Path(str(target_payload.get("image_file_name") or "")).name,
+                Path(str(target_payload.get("annotation_file_name") or "")).name,
+                str(target_payload.get("source_annotation_id") or target_payload.get("annotation_id") or ""),
+                str(target_payload.get("category_id") or ""),
+                str(target_payload.get("category_name") or ""),
+                ",".join(str(round(float(value), 3)) for value in (target_payload.get("bbox_xywh") or [])[:4]),
+            ]
         )
 
     @staticmethod
@@ -633,29 +647,116 @@ class UploadedTargetStore:
         actual_width: int,
         actual_height: int,
     ) -> tuple[list[TargetRecord], list[dict[str, Any]], dict[str, Any]]:
-        session_payload = deepcopy(annotation_payload["session"])
-        target = TargetRecord.from_dict(session_payload["target"])
-        target.annotation_file_name = annotation_file_name
-        target.annotation_json_path = str(annotation_path.resolve())
-        target.image_path = str(image_path.resolve())
-        target.image_file_name = image_file_name or target.image_file_name
-        target.image_width = int(target.image_width or actual_width)
-        target.image_height = int(target.image_height or actual_height)
-        target.import_id = import_id
-        target.imported_at = imported_at
-        target.key = self._target_key(
-            import_id=import_id,
-            source_key=source_key,
-            category_name=target.category_name,
-            annotation_id=str(target.source_annotation_id or target.annotation_id),
-            result_index=int(target.result_index),
-        )
-        session_payload["session_id"] = target.key
-        session_payload["target"] = target.to_dict()
         coco_payload = annotation_payload.get("coco_payload")
         if not isinstance(coco_payload, dict):
-            coco_payload = self._minimal_coco_from_target(target)
-        return [target], [session_payload], coco_payload
+            coco_payload = None
+
+        raw_sessions: list[dict[str, Any]] = []
+        if isinstance(annotation_payload.get("sessions"), list):
+            raw_sessions = [
+                deepcopy(item) for item in annotation_payload.get("sessions", []) if isinstance(item, dict)
+            ]
+        elif isinstance(annotation_payload.get("session"), dict):
+            raw_sessions = [deepcopy(annotation_payload["session"])]
+
+        targets: list[TargetRecord] = []
+        restored_sessions: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()
+
+        for result_index, session_payload in enumerate(raw_sessions):
+            if not isinstance(session_payload.get("target"), dict):
+                continue
+            target = TargetRecord.from_dict(session_payload["target"])
+            target.annotation_file_name = annotation_file_name
+            target.annotation_json_path = str(annotation_path.resolve())
+            target.image_path = str(image_path.resolve())
+            target.image_file_name = image_file_name or target.image_file_name
+            target.image_width = int(target.image_width or actual_width)
+            target.image_height = int(target.image_height or actual_height)
+            target.import_id = import_id
+            target.imported_at = imported_at
+            target.key = self._target_key(
+                import_id=import_id,
+                source_key=source_key,
+                category_name=target.category_name,
+                annotation_id=str(target.source_annotation_id or target.annotation_id),
+                result_index=int(target.result_index if target.result_index is not None else result_index),
+            )
+            session_payload["session_id"] = target.key
+            session_payload["target"] = target.to_dict()
+            targets.append(target)
+            restored_sessions.append(session_payload)
+            seen_keys.add(self._state_target_identity(target.to_dict()))
+
+        for result_index, target_payload in enumerate(annotation_payload.get("targets", []) or []):
+            if not isinstance(target_payload, dict):
+                continue
+            if self._state_target_identity(target_payload) in seen_keys:
+                continue
+            target = TargetRecord.from_dict(target_payload)
+            target.annotation_file_name = annotation_file_name
+            target.annotation_json_path = str(annotation_path.resolve())
+            target.image_path = str(image_path.resolve())
+            target.image_file_name = image_file_name or target.image_file_name
+            target.image_width = int(target.image_width or actual_width)
+            target.image_height = int(target.image_height or actual_height)
+            target.import_id = import_id
+            target.imported_at = imported_at
+            target.key = self._target_key(
+                import_id=import_id,
+                source_key=source_key,
+                category_name=target.category_name,
+                annotation_id=str(target.source_annotation_id or target.annotation_id),
+                result_index=int(target.result_index if target.result_index is not None else result_index),
+            )
+            targets.append(target)
+            seen_keys.add(self._state_target_identity(target.to_dict()))
+
+        if not targets and isinstance(coco_payload, dict):
+            targets = self._build_targets(
+                annotation_payload=coco_payload,
+                annotation_file_name=annotation_file_name,
+                annotation_path=annotation_path,
+                image_file_name=image_file_name,
+                image_path=image_path,
+                actual_width=actual_width,
+                actual_height=actual_height,
+                import_id=import_id,
+                imported_at=imported_at,
+                source_key=source_key,
+            )
+
+        if not isinstance(coco_payload, dict):
+            coco_payload = self._minimal_coco_from_target(targets[0]) if targets else {}
+        return targets, restored_sessions, coco_payload
+
+    def _write_initial_state_payload(
+        self,
+        import_id: str,
+        image_file_name: str,
+        annotation_file_name: str,
+        coco_payload: dict[str, Any],
+        targets: list[TargetRecord],
+    ) -> Path | None:
+        if not targets:
+            return None
+        state_path = self.state_output_path(targets[0], deleted=False)
+        if state_path.exists():
+            return state_path
+        payload = {
+            "schema_version": 3,
+            "format": STATE_EXPORT_FORMAT,
+            "saved_at": utc_now_iso(),
+            "copy_id": import_id,
+            "image_file_name": image_file_name,
+            "coco_file_name": annotation_file_name,
+            "coco_payload": deepcopy(coco_payload),
+            "targets": [target.to_dict() for target in targets],
+            "sessions": [],
+        }
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return state_path
 
     def import_bundle(
         self,
@@ -671,6 +772,8 @@ class UploadedTargetStore:
         annotation_state_label: str | None = None,
         image_relative_path: str | None = None,
         annotation_relative_path: str | None = None,
+        manifest_cache: dict[str, dict[str, Any]] | None = None,
+        persist_manifest: bool = True,
     ) -> dict[str, Any]:
         image_file_name = Path(image_file_name or "uploaded_image").name
         annotation_file_name = Path(annotation_file_name or "annotation.json").name
@@ -769,6 +872,14 @@ class UploadedTargetStore:
                 imported_at=imported_at,
                 source_key=source_key,
             )
+            if isinstance(target_source_payload, dict) and isinstance(target_source_payload.get("annotations"), list):
+                self._write_initial_state_payload(
+                    import_id=import_id,
+                    image_file_name=image_file_name,
+                    annotation_file_name=annotation_path.name,
+                    coco_payload=target_source_payload,
+                    targets=targets,
+                )
 
         if not targets and not restored_from_working_copy:
             raise ValueError("No rectanglelabels or COCO bbox targets were found in the uploaded annotation JSON.")
@@ -779,7 +890,15 @@ class UploadedTargetStore:
         existing_payload: dict[str, Any] = {}
         existing_targets: list[dict[str, Any]] = []
         source_files: list[dict[str, Any]] = []
-        if manifest_path.exists():
+        if manifest_cache is not None and import_id in manifest_cache:
+            existing_payload = manifest_cache[import_id]
+            existing_targets = [
+                item for item in existing_payload.get("targets", []) if isinstance(item, dict)
+            ]
+            source_files = [
+                item for item in existing_payload.get("source_files", []) if isinstance(item, dict)
+            ]
+        elif manifest_path.exists():
             try:
                 existing_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
             except Exception:
@@ -832,19 +951,69 @@ class UploadedTargetStore:
             "source_files": source_files,
             "targets": list(target_payloads_by_key.values()),
         }
-        manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        manifest_path.write_text(
-            json.dumps(manifest_payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
-        with self._lock:
-            self._register_manifest_payload(manifest_payload)
+        if manifest_cache is not None:
+            manifest_cache[import_id] = manifest_payload
+        if persist_manifest:
+            self._persist_manifest_payload(import_id, manifest_payload)
 
         response_payload = dict(manifest_payload)
         response_payload["targets"] = [target.to_dict() for target in targets]
         response_payload["restored_sessions"] = restored_sessions
         return response_payload
+
+    def import_bundles(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        manifest_cache: dict[str, dict[str, Any]] = {}
+        imported_targets: list[dict[str, Any]] = []
+        restored_sessions: list[dict[str, Any]] = []
+        imports_by_id: dict[str, dict[str, Any]] = {}
+        errors: list[dict[str, Any]] = []
+
+        for index, item in enumerate(items):
+            try:
+                payload = self.import_bundle(
+                    image_file_name=str(item.get("image_file_name", "")),
+                    image_data_url=str(item.get("image_data_url", "")),
+                    annotation_file_name=str(item.get("annotation_file_name", "")),
+                    annotation_text=str(item.get("annotation_text", "")),
+                    import_session_id=item.get("import_session_id"),
+                    import_session_label=item.get("import_session_label"),
+                    image_set_id=item.get("image_set_id"),
+                    image_set_label=item.get("image_set_label"),
+                    annotation_state_id=item.get("annotation_state_id"),
+                    annotation_state_label=item.get("annotation_state_label"),
+                    image_relative_path=item.get("image_relative_path"),
+                    annotation_relative_path=item.get("annotation_relative_path"),
+                    manifest_cache=manifest_cache,
+                    persist_manifest=False,
+                )
+            except Exception as error:
+                errors.append(
+                    {
+                        "index": index,
+                        "annotation_file_name": item.get("annotation_file_name"),
+                        "image_file_name": item.get("image_file_name"),
+                        "error": str(error),
+                    }
+                )
+                continue
+            imported_targets.extend(payload.get("targets") or [])
+            restored_sessions.extend(payload.get("restored_sessions") or [])
+            imports_by_id[str(payload.get("import_id") or "")] = {
+                key: value
+                for key, value in payload.items()
+                if key not in {"targets", "restored_sessions"}
+            }
+
+        for import_id, manifest_payload in manifest_cache.items():
+            self._persist_manifest_payload(import_id, manifest_payload)
+
+        return {
+            "ok": not errors,
+            "imports": list(imports_by_id.values()),
+            "targets": imported_targets,
+            "restored_sessions": restored_sessions,
+            "errors": errors,
+        }
 
     def _load_existing_manifests(self) -> None:
         manifest_paths = (
@@ -883,6 +1052,55 @@ class UploadedTargetStore:
         self._manifest_paths_by_id[import_id] = manifest_path or self._manifest_path(import_id)
         for target in targets:
             self._targets_by_key[target.key] = target
+        self._ensure_image_state_files(import_id, targets)
+
+    def _ensure_image_state_files(self, import_id: str, targets: list[TargetRecord]) -> None:
+        targets_by_image: dict[str, list[TargetRecord]] = {}
+        for target in targets:
+            if not target.image_file_name:
+                continue
+            targets_by_image.setdefault(Path(target.image_file_name).name, []).append(target)
+
+        for image_targets in targets_by_image.values():
+            kept_targets = [target for target in image_targets if Path(target.annotation_json_path).exists()]
+            if not kept_targets:
+                continue
+            state_path = self.state_output_path(kept_targets[0], deleted=False)
+            if state_path.exists():
+                continue
+
+            coco_payload = None
+            coco_path = Path(kept_targets[0].annotation_json_path)
+            with contextlib.suppress(Exception):
+                loaded = json.loads(coco_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    coco_payload = loaded
+            if not isinstance(coco_payload, dict):
+                coco_payload = self._minimal_coco_from_target(kept_targets[0])
+
+            payload = {
+                "schema_version": 3,
+                "format": STATE_EXPORT_FORMAT,
+                "saved_at": utc_now_iso(),
+                "copy_id": import_id,
+                "image_file_name": kept_targets[0].image_file_name,
+                "coco_file_name": kept_targets[0].annotation_file_name,
+                "coco_payload": coco_payload,
+                "targets": [target.to_dict() for target in kept_targets],
+                "sessions": [],
+            }
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _persist_manifest_payload(self, import_id: str, manifest_payload: dict[str, Any]) -> None:
+        manifest_path = self._manifest_path(import_id)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(manifest_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        with self._lock:
+            self._register_manifest_payload(manifest_payload)
 
     def _save_import_manifest(self, import_id: str) -> None:
         payload = self._imports_by_id.get(import_id)
@@ -1651,30 +1869,7 @@ class MaskIterationService:
         self._validate_lock = threading.RLock()
 
     def bootstrap_payload(self) -> dict[str, Any]:
-        session_meta = self.session_store.list_session_meta()
         image_deletion_records = self.session_store.list_image_deletion_records()
-        image_deleted_keys = {
-            str(target_key)
-            for record in image_deletion_records
-            for target_key in (record.get("target_keys") or [])
-        }
-        difficult_path = self.session_store.difficult_targets_root() / "difficult_targets.json"
-        difficult_keys: set[str] = set()
-        if difficult_path.exists():
-            with contextlib.suppress(Exception):
-                difficult_payload = json.loads(difficult_path.read_text(encoding="utf-8"))
-                difficult_keys = {
-                    str((item.get("target") or {}).get("key") or item.get("target_key") or "")
-                    for item in difficult_payload.get("records", [])
-                    if isinstance(item, dict)
-                }
-        recent_targets = [
-            self._target_payload(target, session_meta.get(target.key, {}))
-            for target in self.target_store.recent_targets()
-            if not bool((session_meta.get(target.key, {}) or {}).get("is_deleted", False))
-            and target.key not in image_deleted_keys
-            and target.key not in difficult_keys
-        ]
         return {
             "app": {
                 "title": "SAM3 Mask Iteration Web App",
@@ -1688,7 +1883,7 @@ class MaskIterationService:
                 "annotations_root": str(self.target_store.runs_root.resolve()),
                 "manifests_root": str(self.target_store.runs_root.resolve()),
             },
-            "recent_targets": recent_targets,
+            "recent_targets": [],
             "image_deletions": image_deletion_records,
             "validate_tools": self._build_validate_tools_payload(),
         }
@@ -2046,27 +2241,84 @@ class MaskIterationService:
     def _save_state_output(self, session: SessionState) -> Path:
         target = session.target
         state_path = self.target_store.state_output_path(target, deleted=bool(session.is_deleted))
-        if session.is_deleted:
-            kept_state_path = self.target_store.state_output_path(target, deleted=False)
-            with contextlib.suppress(Exception):
-                if kept_state_path.exists() and kept_state_path != state_path:
-                    kept_state_path.unlink()
         coco_payload = None
         coco_path = Path(target.annotation_json_path)
         if coco_path.exists():
             with contextlib.suppress(Exception):
                 coco_payload = json.loads(coco_path.read_text(encoding="utf-8"))
+        existing_payload: dict[str, Any] = {}
+        if state_path.exists():
+            with contextlib.suppress(Exception):
+                loaded = json.loads(state_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing_payload = loaded
+        elif not session.is_deleted:
+            existing_payload = {
+                "targets": [target.to_dict()],
+                "sessions": [],
+            }
+
+        target_payload = target.to_dict()
+        target_identity = self.target_store._state_target_identity(target_payload)
+        targets_by_identity: dict[str, dict[str, Any]] = {}
+        sessions_by_identity: dict[str, dict[str, Any]] = {}
+
+        for item in existing_payload.get("targets", []) or []:
+            if isinstance(item, dict):
+                targets_by_identity[self.target_store._state_target_identity(item)] = item
+        if isinstance(existing_payload.get("session"), dict):
+            item = existing_payload["session"]
+            if isinstance(item.get("target"), dict):
+                sessions_by_identity[self.target_store._state_target_identity(item["target"])] = item
+                targets_by_identity[self.target_store._state_target_identity(item["target"])] = item["target"]
+        for item in existing_payload.get("sessions", []) or []:
+            if isinstance(item, dict) and isinstance(item.get("target"), dict):
+                sessions_by_identity[self.target_store._state_target_identity(item["target"])] = item
+                targets_by_identity[self.target_store._state_target_identity(item["target"])] = item["target"]
+
+        targets_by_identity[target_identity] = target_payload
+        sessions_by_identity[target_identity] = session.to_dict()
+
         payload = {
-            "schema_version": 2,
+            "schema_version": 3,
             "format": STATE_EXPORT_FORMAT,
             "saved_at": utc_now_iso(),
             "copy_id": target.import_id,
+            "image_file_name": target.image_file_name,
             "coco_file_name": target.annotation_file_name,
-            "coco_payload": coco_payload if isinstance(coco_payload, dict) else None,
-            "session": session.to_dict(),
+            "coco_payload": coco_payload if isinstance(coco_payload, dict) else existing_payload.get("coco_payload"),
+            "targets": list(targets_by_identity.values()),
+            "sessions": list(sessions_by_identity.values()),
         }
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        if session.is_deleted:
+            kept_state_path = self.target_store.state_output_path(target, deleted=False)
+            if kept_state_path.exists() and kept_state_path != state_path:
+                with contextlib.suppress(Exception):
+                    kept_payload = json.loads(kept_state_path.read_text(encoding="utf-8"))
+                    if isinstance(kept_payload, dict):
+                        kept_payload["targets"] = [
+                            item for item in kept_payload.get("targets", []) or []
+                            if not (isinstance(item, dict) and self.target_store._state_target_identity(item) == target_identity)
+                        ]
+                        kept_payload["sessions"] = [
+                            item for item in kept_payload.get("sessions", []) or []
+                            if not (
+                                isinstance(item, dict)
+                                and isinstance(item.get("target"), dict)
+                                and self.target_store._state_target_identity(item["target"]) == target_identity
+                            )
+                        ]
+                        if kept_payload["targets"] or kept_payload["sessions"]:
+                            kept_payload["saved_at"] = utc_now_iso()
+                            kept_state_path.write_text(
+                                json.dumps(kept_payload, ensure_ascii=False, indent=2),
+                                encoding="utf-8",
+                            )
+                        else:
+                            kept_state_path.unlink()
         return state_path
 
     def _load_target_annotation_payload(self, target: TargetRecord) -> tuple[Path | None, dict[str, Any] | None]:
@@ -3114,6 +3366,53 @@ class MaskIterationService:
             for index, (x, y) in enumerate(candidate_points[:5])
         ]
 
+    def _prepare_import_response(self, manifest: dict[str, Any]) -> dict[str, Any]:
+        target_items = [item for item in manifest.get("targets", []) if isinstance(item, dict)]
+        restored_session_keys: list[str] = []
+        for session_payload in manifest.get("restored_sessions", []) or []:
+            if not isinstance(session_payload, dict):
+                continue
+            restored_session = SessionState.from_dict(session_payload)
+            self.session_store.save_session(restored_session)
+            self._save_coco_segmentation_output(restored_session)
+            self._save_state_output(restored_session)
+            restored_session_keys.append(restored_session.session_id)
+        for item in target_items:
+            target = TargetRecord.from_dict(item)
+            existing = self.session_store.load_session(target.key)
+            if existing is not None:
+                if existing.target.to_dict() != target.to_dict():
+                    existing.target = target
+                    self.session_store.save_session(existing)
+                restored_session_keys.append(target.key)
+                continue
+            migrated = self.session_store.find_session_by_target_identity(target)
+            if migrated is None:
+                continue
+            migrated.session_id = target.key
+            migrated.target = target
+            self.session_store.save_session(migrated)
+            restored_session_keys.append(target.key)
+        session_meta = self.session_store.list_session_meta()
+        targets = [
+            self._target_payload(TargetRecord.from_dict(item), session_meta.get(item["key"], {}))
+            for item in target_items
+        ]
+        return {
+            "import_id": manifest.get("import_id"),
+            "imported_at": manifest.get("imported_at"),
+            "import_session_label": manifest.get("import_session_label"),
+            "image_set_id": manifest.get("image_set_id"),
+            "image_set_label": manifest.get("image_set_label"),
+            "annotation_state_id": manifest.get("annotation_state_id"),
+            "annotation_state_label": manifest.get("annotation_state_label"),
+            "image_file_name": manifest.get("image_file_name"),
+            "annotation_file_name": manifest.get("annotation_file_name"),
+            "restored_from_working_copy": bool(manifest.get("restored_from_working_copy", False)),
+            "restored_session_keys": restored_session_keys,
+            "targets": targets,
+        }
+
     def import_targets(
         self,
         image_file_name: str,
@@ -3143,50 +3442,33 @@ class MaskIterationService:
             image_relative_path=image_relative_path,
             annotation_relative_path=annotation_relative_path,
         )
-        restored_session_keys: list[str] = []
-        for session_payload in manifest.get("restored_sessions", []) or []:
-            if not isinstance(session_payload, dict):
-                continue
-            restored_session = SessionState.from_dict(session_payload)
-            self.session_store.save_session(restored_session)
-            self._save_coco_segmentation_output(restored_session)
-            self._save_state_output(restored_session)
-            restored_session_keys.append(restored_session.session_id)
-        for item in manifest["targets"]:
-            target = TargetRecord.from_dict(item)
-            existing = self.session_store.load_session(target.key)
-            if existing is not None:
-                if existing.target.to_dict() != target.to_dict():
-                    existing.target = target
-                    self.session_store.save_session(existing)
-                restored_session_keys.append(target.key)
-                continue
-            migrated = self.session_store.find_session_by_target_identity(target)
-            if migrated is None:
-                continue
-            migrated.session_id = target.key
-            migrated.target = target
-            self.session_store.save_session(migrated)
-            restored_session_keys.append(target.key)
-        session_meta = self.session_store.list_session_meta()
-        targets = [
-            self._target_payload(TargetRecord.from_dict(item), session_meta.get(item["key"], {}))
-            for item in manifest["targets"]
-        ]
-        return {
-            "import_id": manifest["import_id"],
-            "imported_at": manifest["imported_at"],
-            "import_session_label": manifest.get("import_session_label"),
-            "image_set_id": manifest.get("image_set_id"),
-            "image_set_label": manifest.get("image_set_label"),
-            "annotation_state_id": manifest.get("annotation_state_id"),
-            "annotation_state_label": manifest.get("annotation_state_label"),
-            "image_file_name": manifest["image_file_name"],
-            "annotation_file_name": manifest["annotation_file_name"],
-            "restored_from_working_copy": bool(manifest.get("restored_from_working_copy", False)),
-            "restored_session_keys": restored_session_keys,
-            "targets": targets,
+        return self._prepare_import_response(manifest)
+
+    def import_targets_batch(self, items: Any) -> dict[str, Any]:
+        if not isinstance(items, list) or not items:
+            raise ValueError("Batch import requires a non-empty items list.")
+        batch = self.target_store.import_bundles(items)
+        imports = [item for item in batch.get("imports", []) if isinstance(item, dict)]
+        first_import = imports[0] if imports else {}
+        manifest = {
+            "import_id": first_import.get("import_id"),
+            "imported_at": first_import.get("imported_at") or utc_now_iso(),
+            "import_session_label": first_import.get("import_session_label"),
+            "image_set_id": first_import.get("image_set_id"),
+            "image_set_label": first_import.get("image_set_label"),
+            "annotation_state_id": first_import.get("annotation_state_id"),
+            "annotation_state_label": first_import.get("annotation_state_label"),
+            "image_file_name": first_import.get("image_file_name"),
+            "annotation_file_name": first_import.get("annotation_file_name"),
+            "restored_from_working_copy": bool(first_import.get("restored_from_working_copy", False)),
+            "targets": batch.get("targets") or [],
+            "restored_sessions": batch.get("restored_sessions") or [],
         }
+        response = self._prepare_import_response(manifest)
+        response["imports"] = imports
+        response["errors"] = batch.get("errors") or []
+        response["ok"] = not response["errors"]
+        return response
 
     def _restore_session_from_run_state(self, target: TargetRecord) -> SessionState | None:
         for deleted in (False, True):
@@ -3197,9 +3479,21 @@ class MaskIterationService:
                 payload = json.loads(state_path.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            if not isinstance(payload, dict) or not isinstance(payload.get("session"), dict):
+            if not isinstance(payload, dict):
                 continue
-            session_payload = deepcopy(payload["session"])
+            session_payload = None
+            if isinstance(payload.get("session"), dict):
+                session_payload = deepcopy(payload["session"])
+            else:
+                target_identity = self.target_store._state_target_identity(target.to_dict())
+                for item in payload.get("sessions", []) or []:
+                    if not isinstance(item, dict) or not isinstance(item.get("target"), dict):
+                        continue
+                    if self.target_store._state_target_identity(item["target"]) == target_identity:
+                        session_payload = deepcopy(item)
+                        break
+            if not isinstance(session_payload, dict):
+                continue
             session_payload["session_id"] = target.key
             session_payload["target"] = target.to_dict()
             if deleted:
@@ -3590,29 +3884,23 @@ class MaskIterationService:
                 raise ValueError("No history ids were selected.")
             if "init" in delete_ids:
                 raise ValueError("The init history cannot be deleted.")
-            if session.current_history_id in delete_ids:
-                raise ValueError("The current working history cannot be deleted.")
 
             existing_ids = {item.history_id for item in session.history}
             missing = sorted(delete_ids - existing_ids)
             if missing:
                 raise KeyError(f"History id not found: {', '.join(missing)}")
 
-            broken_children = sorted(
-                item.history_id
-                for item in session.history
-                if item.history_id not in delete_ids and item.parent_history_id in delete_ids
-            )
-            if broken_children:
-                raise ValueError(
-                    "Deleting these histories would break the history chain. "
-                    f"Also select child histories first: {', '.join(broken_children)}"
-                )
-
             removed = [item for item in session.history if item.history_id in delete_ids]
             session.history = [item for item in session.history if item.history_id not in delete_ids]
             if not session.history:
                 raise ValueError("At least one history item must remain.")
+            if session.current_history_id in delete_ids:
+                fallback = session.history[-1]
+                session.current_history_id = fallback.history_id
+                session.working_points = copy_points(fallback.manual_points_snapshot)
+                session.line_strokes = copy_line_strokes(fallback.line_strokes_snapshot)
+                session.locked_regions = copy_locked_regions(fallback.locked_regions_snapshot)
+                session.text_prompt = fallback.text_prompt
 
             session_dir = self.session_store.session_dir(session.session_id)
             for item in removed:
