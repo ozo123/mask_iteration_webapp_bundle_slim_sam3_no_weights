@@ -127,25 +127,39 @@ def test_coco_segmentation_and_state_use_current_history(tmp_path):
 
     coco = json.loads(Path(session.target.annotation_json_path).read_text(encoding="utf-8"))
     assert coco["annotations"][0]["segmentation"]["points"] == [[0, 0]]
-    state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "ann__101.json"
+    state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
     state_payload = json.loads(state_path.read_text(encoding="utf-8"))
     assert state_payload["format"] == "mask_iteration_state"
-    assert [item["history_id"] for item in state_payload["session"]["history"]] == ["init", "iter1"]
-    assert state_payload["session"]["history"][1]["mask_rle"]["points"] == [[2, 2]]
+    assert len(state_payload["sessions"]) == 1
+    assert [item["history_id"] for item in state_payload["sessions"][0]["history"]] == ["init", "iter1"]
+    assert state_payload["sessions"][0]["history"][1]["mask_rle"]["points"] == [[2, 2]]
 
 
-def test_delete_history_rejects_broken_chain_and_allows_closed_selection(tmp_path):
+def test_delete_history_allows_any_non_init_history(tmp_path):
     target_store = UploadedTargetStore(tmp_path / "runs")
     service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
     session = _session(_target(tmp_path), current_history_id="init")
     session.history.append(_history("iter2", "iter1", [3, 3]))
     service._save_session_outputs(session)
 
-    with pytest.raises(ValueError, match="break the history chain"):
-        service.delete_history_items("target_a", ["iter1"])
+    payload = service.delete_history_items("target_a", ["iter1"])
+    assert [item["history_id"] for item in payload["session"]["history"]] == ["init", "iter2"]
 
-    payload = service.delete_history_items("target_a", ["iter1", "iter2"])
+    payload = service.delete_history_items("target_a", ["iter2"])
     assert [item["history_id"] for item in payload["session"]["history"]] == ["init"]
+
+
+def test_delete_current_history_falls_back_to_latest_remaining(tmp_path):
+    target_store = UploadedTargetStore(tmp_path / "runs")
+    service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
+    session = _session(_target(tmp_path), current_history_id="iter2")
+    session.history.append(_history("iter2", "iter1", [3, 3]))
+    service._save_session_outputs(session)
+
+    payload = service.delete_history_items("target_a", ["iter2"])
+
+    assert [item["history_id"] for item in payload["session"]["history"]] == ["init", "iter1"]
+    assert payload["session"]["current_history_id"] == "iter1"
 
 
 def test_delete_target_writes_deleted_coco_and_state(tmp_path):
@@ -165,11 +179,11 @@ def test_delete_target_writes_deleted_coco_and_state(tmp_path):
     assert deleted_coco["annotations"][0]["id"] == 101
     assert deleted_coco["annotations"][0]["segmentation"]["points"] == [[2, 2]]
 
-    kept_state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "ann__101.json"
-    deleted_state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_DELETE_DIR / RUN_STATE_DIR / "ann__101.json"
+    kept_state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
+    deleted_state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_DELETE_DIR / RUN_STATE_DIR / "a.json"
     assert not kept_state_path.exists()
     deleted_state = json.loads(deleted_state_path.read_text(encoding="utf-8"))
-    assert deleted_state["session"]["is_deleted"] is True
+    assert deleted_state["sessions"][0]["is_deleted"] is True
 
 
 def test_open_session_restores_from_run_state_when_session_cache_is_missing(tmp_path):
