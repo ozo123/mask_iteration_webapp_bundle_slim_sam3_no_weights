@@ -816,10 +816,6 @@
         </div>
 
         <div class="field span-2">
-          <label for="contextPad">视窗上下文</label>
-          <input id="contextPad" type="range" min="0.1" max="1.6" step="0.05" value="0.45">
-        </div>
-        <div class="field span-2">
           <label for="maskOpacity">当前 Mask 透明度</label>
           <input id="maskOpacity" type="range" min="0" max="1" step="0.05" value="0.5">
         </div>
@@ -1032,7 +1028,6 @@
       prevTargetBtn: document.getElementById("prevTargetBtn"),
       nextTargetBtn: document.getElementById("nextTargetBtn"),
       targetSummary: document.getElementById("targetSummary"),
-      contextPad: document.getElementById("contextPad"),
       maskOpacity: document.getElementById("maskOpacity"),
       compareOpacity: document.getElementById("compareOpacity"),
       variantName: document.getElementById("variantName"),
@@ -1094,7 +1089,8 @@
       lockedRegionStroke: [127, 227, 190],
     };
 
-    const IMPORT_BATCH_SIZE = 12;
+    const IMPORT_BATCH_SIZE = 4;
+    const FOCUS_CONTEXT_SCALE_FACTOR = 3.9;
 
     const state = {
       bootstrap: null,
@@ -1130,6 +1126,7 @@
         startClientY: 0,
         startPanX: 0,
         startPanY: 0,
+        mode: "",
       },
       drawingStroke: {
         active: false,
@@ -1144,14 +1141,6 @@
 
     function clamp(value, min, max) {
       return Math.min(Math.max(value, min), max);
-    }
-
-    function chunkArray(items, size) {
-      const chunks = [];
-      for (let index = 0; index < items.length; index += size) {
-        chunks.push(items.slice(index, index + size));
-      }
-      return chunks;
     }
 
     function round2(value) {
@@ -1719,10 +1708,8 @@
       const wrapWidth = Math.max(320, el.canvasWrap.clientWidth - 16);
       const wrapHeight = Math.max(320, el.canvasWrap.clientHeight - 16);
       const aspect = wrapWidth / Math.max(1, wrapHeight);
-      const contextPad = Number(el.contextPad.value || 0.45);
-      const scaleFactor = 2.2 + contextPad * 3.8;
-      let focusWidth = Math.max(bboxWidth * scaleFactor, imageWidth * 0.16);
-      let focusHeight = Math.max(bboxHeight * scaleFactor, imageHeight * 0.16);
+      let focusWidth = Math.max(bboxWidth * FOCUS_CONTEXT_SCALE_FACTOR, imageWidth * 0.16);
+      let focusHeight = Math.max(bboxHeight * FOCUS_CONTEXT_SCALE_FACTOR, imageHeight * 0.16);
 
       if (focusWidth / Math.max(1, focusHeight) > aspect) {
         focusHeight = focusWidth / Math.max(0.01, aspect);
@@ -2922,8 +2909,10 @@
         const skipped = [];
         const failed = [];
         const matchedImageNames = new Set();
-        const pendingImports = [];
+        let pendingImports = [];
         const imageDataUrlCache = new Map();
+        let uploadedImportCount = 0;
+        let importBatchIndex = 0;
         const imageFolderLabel = getSelectedFolderLabel(imageFiles) || "图片文件夹";
         const annotationFolderLabel = getSelectedFolderLabel(annotationFiles) || "标注文件夹";
         const imageSetLabel = (imageFolderLabel || "图片文件夹").trim();
@@ -2933,6 +2922,27 @@
         const annotationStateId = copyId;
         const importSessionId = copyId;
         const importSessionLabel = `图片: ${imageSetLabel} | 标注状态: ${annotationStateLabel}`;
+        const flushPendingImports = async () => {
+          if (!pendingImports.length) return;
+          importBatchIndex += 1;
+          const chunk = pendingImports;
+          pendingImports = [];
+          const start = uploadedImportCount + 1;
+          const end = uploadedImportCount + chunk.length;
+          setBusy(`Uploading ${start}-${end} / ${annotationFiles.length}...`);
+          try {
+            const payload = await apiPost("/api/import-targets/batch", { items: chunk });
+            importedTargets.push(...(payload.targets || []));
+            for (const item of (payload.errors || [])) {
+              failed.push(`${item.annotation_file_name || "annotation"}: ${item.error || "import failed"}`);
+            }
+          } catch (error) {
+            failed.push(`Batch ${importBatchIndex}: ${error.message || error}`);
+          } finally {
+            uploadedImportCount = end;
+            imageDataUrlCache.clear();
+          }
+        };
 
         for (let index = 0; index < annotationFiles.length; index += 1) {
           const annotationFile = annotationFiles[index];
@@ -2974,27 +2984,15 @@
               image_relative_path: imageFile.webkitRelativePath || imageFile.name,
               annotation_relative_path: annotationFile.webkitRelativePath || annotationFile.name,
             });
+            if (pendingImports.length >= IMPORT_BATCH_SIZE) {
+              await flushPendingImports();
+            }
           } catch (error) {
             failed.push(`${annotationFile.name}: ${error.message || error}`);
           }
         }
 
-        const importChunks = chunkArray(pendingImports, IMPORT_BATCH_SIZE);
-        for (let index = 0; index < importChunks.length; index += 1) {
-          const chunk = importChunks[index];
-          const start = (index * IMPORT_BATCH_SIZE) + 1;
-          const end = Math.min(start + chunk.length - 1, pendingImports.length);
-          setBusy(`Uploading ${start}-${end} / ${pendingImports.length}...`);
-          try {
-            const payload = await apiPost("/api/import-targets/batch", { items: chunk });
-            importedTargets.push(...(payload.targets || []));
-            for (const item of (payload.errors || [])) {
-              failed.push(`${item.annotation_file_name || "annotation"}: ${item.error || "import failed"}`);
-            }
-          } catch (error) {
-            failed.push(`Batch ${index + 1}: ${error.message || error}`);
-          }
-        }
+        await flushPendingImports();
 
         const unmatchedImages = imageFiles
           .map((file) => getBaseName(file.name))
@@ -3047,7 +3045,7 @@
         setBusy("Opening session and generating initial mask...");
         await loadImageForTarget(targetKey);
         if (requestId !== state.openRequestId || targetKey !== state.selectedTargetKey) return;
-        const payload = await apiPost("/api/open-session", { target_key: targetKey });
+        const payload = await apiPost("/api/open-session", { target_key: targetKey }, { timeoutMs: 600000 });
         if (requestId !== state.openRequestId || targetKey !== state.selectedTargetKey) return;
         state.autoFitPending = true;
         applySessionPayload(payload);
@@ -3413,6 +3411,7 @@
       state.currentTool = toolName;
       state.drag.active = false;
       state.drag.moved = false;
+      state.drag.mode = "";
       state.drawingStroke.active = false;
       state.drawingStroke.points = [];
       resetDrawingRegion();
@@ -3425,7 +3424,20 @@
     }
 
     function handleCanvasMouseDown(event) {
-      if (!state.session || state.busy || event.button !== 0) return;
+      if (!state.session || state.busy) return;
+      if (event.button === 2) {
+        event.preventDefault();
+        state.drag.active = true;
+        state.drag.moved = false;
+        state.drag.mode = "pan";
+        state.drag.startClientX = event.clientX;
+        state.drag.startClientY = event.clientY;
+        state.drag.startPanX = state.panX;
+        state.drag.startPanY = state.panY;
+        el.viewer.classList.add("dragging");
+        return;
+      }
+      if (event.button !== 0) return;
       if (state.currentTool === "line") {
         const xy = clientToImageXY(event);
         if (!xy) return;
@@ -3472,6 +3484,7 @@
       }
       state.drag.active = true;
       state.drag.moved = false;
+      state.drag.mode = state.currentTool === "pan" ? "pan" : "click";
       state.drag.startClientX = event.clientX;
       state.drag.startClientY = event.clientY;
       state.drag.startPanX = state.panX;
@@ -3484,6 +3497,19 @@
     function handleCanvasMouseMove(event) {
       const target = getCurrentTarget();
       if (!target) return;
+      if (state.drag.active) {
+        const dx = event.clientX - state.drag.startClientX;
+        const dy = event.clientY - state.drag.startClientY;
+        if (!state.drag.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+          state.drag.moved = true;
+        }
+        if (!state.drag.moved) return;
+        if (state.drag.mode !== "pan") return;
+        state.panX = state.drag.startPanX + dx;
+        state.panY = state.drag.startPanY + dy;
+        applyCanvasZoom(computeCropBox(target));
+        return;
+      }
       if (state.currentTool === "line" && state.drawingStroke.active) {
         const xy = clientToImageXY(event);
         if (!xy) return;
@@ -3511,17 +3537,6 @@
         }
         return;
       }
-      if (!state.drag.active) return;
-      const dx = event.clientX - state.drag.startClientX;
-      const dy = event.clientY - state.drag.startClientY;
-      if (!state.drag.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
-        state.drag.moved = true;
-      }
-      if (!state.drag.moved) return;
-      if (state.currentTool !== "pan") return;
-      state.panX = state.drag.startPanX + dx;
-      state.panY = state.drag.startPanY + dy;
-      applyCanvasZoom(computeCropBox(target));
     }
 
     async function handleCanvasMouseUp(event) {
@@ -3555,10 +3570,12 @@
       }
       if (!state.drag.active) return;
       const moved = state.drag.moved;
+      const dragMode = state.drag.mode;
       state.drag.active = false;
       state.drag.moved = false;
+      state.drag.mode = "";
       el.viewer.classList.remove("dragging");
-      if (!moved && state.currentTool === "point") {
+      if (!moved && dragMode === "click" && state.currentTool === "point") {
         await addPointAtEvent(event);
       }
     }
@@ -3601,10 +3618,6 @@
       });
       el.prevTargetBtn.addEventListener("click", () => { void gotoRelativeTarget(-1); });
       el.nextTargetBtn.addEventListener("click", () => { void gotoRelativeTarget(1); });
-      el.contextPad.addEventListener("input", () => {
-        state.autoFitPending = true;
-        renderAll();
-      });
       el.maskOpacity.addEventListener("input", renderCanvas);
       el.compareOpacity.addEventListener("input", renderCanvas);
       el.variantName.addEventListener("change", syncMetadata);
@@ -3656,9 +3669,7 @@
       el.canvasWrap.addEventListener("wheel", handleCanvasWheel, { passive: false });
       el.viewer.addEventListener("mousedown", handleCanvasMouseDown);
       el.viewer.addEventListener("contextmenu", (event) => {
-        if (state.currentTool === "region") {
-          event.preventDefault();
-        }
+        event.preventDefault();
       });
       el.viewer.addEventListener("dblclick", (event) => {
         if (state.currentTool !== "region" || state.busy || !state.drawingRegion.active) return;

@@ -104,6 +104,16 @@ def test_original_direct_import_still_works_without_explicit_state(tmp_path):
     assert (tmp_path / "runs" / "legacy_folder_work_dataset" / "annotations" / RUN_KEEP_DIR / RUN_COCO_DIR / "ann.json").exists()
 
 
+def test_write_bytes_if_changed_skips_identical_content(tmp_path):
+    path = tmp_path / "image.png"
+
+    assert UploadedTargetStore._write_bytes_if_changed(path, b"same") is True
+    assert path.read_bytes() == b"same"
+    assert UploadedTargetStore._write_bytes_if_changed(path, b"same") is False
+    assert UploadedTargetStore._write_bytes_if_changed(path, b"changed") is True
+    assert path.read_bytes() == b"changed"
+
+
 def _state_payload(image_name="a.png", annotation_id="101"):
     target = {
         "key": "old_key",

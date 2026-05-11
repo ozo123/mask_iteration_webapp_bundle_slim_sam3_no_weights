@@ -13,6 +13,10 @@ def copy_points(points: list["PointRecord"]) -> list["PointRecord"]:
     return [PointRecord.from_dict(point.to_dict()) for point in points]
 
 
+def drop_system_prompt_points(points: list["PointRecord"]) -> list["PointRecord"]:
+    return [point for point in points if str(point.source or "").lower() != "system"]
+
+
 def copy_line_strokes(strokes: list["LineStrokeRecord"]) -> list["LineStrokeRecord"]:
     return [LineStrokeRecord.from_dict(stroke.to_dict()) for stroke in strokes]
 
@@ -194,9 +198,9 @@ class HistoryRecord:
             locked_regions_snapshot=[
                 LockedRegionRecord.from_dict(item) for item in payload.get("locked_regions_snapshot", [])
             ],
-            system_prompt_points=[
-                PointRecord.from_dict(item) for item in payload.get("system_prompt_points", [])
-            ],
+            system_prompt_points=drop_system_prompt_points(
+                [PointRecord.from_dict(item) for item in payload.get("system_prompt_points", [])]
+            ),
             text_prompt=str(payload.get("text_prompt", "") or ""),
             used_mask_prompt=bool(payload.get("used_mask_prompt", False)),
             mask_logits_relpath=payload.get("mask_logits_relpath"),
@@ -266,9 +270,9 @@ class SessionState:
             updated_at=str(payload["updated_at"]),
             target=TargetRecord.from_dict(payload["target"]),
             prompt_box_xyxy=[float(value) for value in payload["prompt_box_xyxy"]],
-            system_prompt_points=[
-                PointRecord.from_dict(item) for item in payload.get("system_prompt_points", [])
-            ],
+            system_prompt_points=drop_system_prompt_points(
+                [PointRecord.from_dict(item) for item in payload.get("system_prompt_points", [])]
+            ),
             working_points=[PointRecord.from_dict(item) for item in payload.get("working_points", [])],
             line_strokes=[LineStrokeRecord.from_dict(item) for item in payload.get("line_strokes", [])],
             locked_regions=[LockedRegionRecord.from_dict(item) for item in payload.get("locked_regions", [])],

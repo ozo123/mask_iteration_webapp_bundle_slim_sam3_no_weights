@@ -436,6 +436,17 @@ class UploadedTargetStore:
         safe_name = self._safe_relative_file_path(annotation_file_name, annotation_relative_path).name
         return self.run_annotations_dir(annotation_state_id or "default_state", status=RUN_KEEP_DIR, kind=RUN_COCO_DIR) / safe_name
 
+    @staticmethod
+    def _write_bytes_if_changed(path: Path, data: bytes) -> bool:
+        if path.exists():
+            try:
+                if path.stat().st_size == len(data) and path.read_bytes() == data:
+                    return False
+            except OSError:
+                pass
+        path.write_bytes(data)
+        return True
+
     def get_target(self, key: str) -> TargetRecord:
         if key not in self._targets_by_key:
             raise KeyError(f"Unknown target key: {key}")
@@ -805,10 +816,7 @@ class UploadedTargetStore:
         image_path.parent.mkdir(parents=True, exist_ok=True)
         annotation_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if image_path.exists():
-            image_path.write_bytes(image_bytes)
-        else:
-            image_path.write_bytes(image_bytes)
+        self._write_bytes_if_changed(image_path, image_bytes)
 
         with Image.open(BytesIO(image_bytes)) as image:
             actual_width, actual_height = image.size
@@ -883,8 +891,6 @@ class UploadedTargetStore:
 
         if not targets and not restored_from_working_copy:
             raise ValueError("No rectanglelabels or COCO bbox targets were found in the uploaded annotation JSON.")
-        if not image_path.exists():
-            image_path.write_bytes(image_bytes)
 
         manifest_path = self._manifest_path(import_id)
         existing_payload: dict[str, Any] = {}
@@ -1513,11 +1519,6 @@ class Sam3InferenceService:
         return ImageModule.open(image_path).convert("RGB")
 
     @staticmethod
-    def _center_of_box_xyxy(box_xyxy: list[float]) -> list[float]:
-        x0, y0, x1, y1 = [float(value) for value in box_xyxy]
-        return [(x0 + x1) / 2.0, (y0 + y1) / 2.0]
-
-    @staticmethod
     def _box_xyxy_to_normalized_cxcywh(
         box_xyxy: list[float], image_width: int, image_height: int
     ) -> list[float]:
@@ -1754,7 +1755,6 @@ class Sam3InferenceService:
             target.image_width,
             target.image_height,
         )
-        center_point = self._center_of_box_xyxy(prompt_box_xyxy)
         autocast_context = (
             torch.autocast(device_type=resolved_device, enabled=False)
             if resolved_device in {"cuda", "mps"}
@@ -1764,8 +1764,8 @@ class Sam3InferenceService:
             state = processor.set_image(image)
             masks, scores, logits = model.predict_inst(
                 state,
-                point_coords=np.asarray([center_point], dtype=np.float32),
-                point_labels=np.asarray([1], dtype=np.int32),
+                point_coords=None,
+                point_labels=None,
                 box=np.asarray([prompt_box_xyxy], dtype=np.float32),
                 mask_input=None,
                 multimask_output=False,
@@ -1773,16 +1773,7 @@ class Sam3InferenceService:
         best_mask, score, best_logits = self._select_best_prediction(masks, scores, logits)
         return {
             "prompt_box_xyxy": [float(value) for value in prompt_box_xyxy],
-            "system_prompt_points": [
-                PointRecord(
-                    point_id="system_center_prompt",
-                    x=float(center_point[0]),
-                    y=float(center_point[1]),
-                    label=1,
-                    created_at=utc_now_iso(),
-                    source="system",
-                )
-            ],
+            "system_prompt_points": [],
             "mask_rle": self._mask_to_rle(best_mask),
             "mask_area": int(best_mask.sum()),
             "mask_bbox_xywh": self._mask_to_xywh(best_mask),
@@ -1810,17 +1801,6 @@ class Sam3InferenceService:
 
         point_coords = None
         point_labels = None
-        if not working_points:
-            working_points = [
-                PointRecord(
-                    point_id="system_box_center_iteration",
-                    x=float(self._center_of_box_xyxy(prompt_box_xyxy)[0]),
-                    y=float(self._center_of_box_xyxy(prompt_box_xyxy)[1]),
-                    label=1,
-                    created_at=utc_now_iso(),
-                    source="system",
-                )
-            ]
         if working_points:
             point_coords = np.asarray([[float(point.x), float(point.y)] for point in working_points], dtype=np.float32)
             point_labels = np.asarray([int(point.label) for point in working_points], dtype=np.int32)
