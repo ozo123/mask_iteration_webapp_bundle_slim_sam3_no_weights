@@ -10,8 +10,10 @@ Pillow>=10.0
 opencv-python>=4.8
 pycocotools>=2.0
 
-# PyTorch runtime used by SAM3 image inference is intentionally not pinned here.
-# Install torch and torchvision separately for your CUDA / MPS / CPU environment.
+# PyTorch runtime used by SAM3 image inference.
+# Kept unpinned so you can replace it with a CUDA / MPS / CPU-specific wheel if needed.
+torch
+torchvision
 
 # SAM3 runtime dependencies from third_party/sam3/pyproject.toml
 timm>=1.0.17
