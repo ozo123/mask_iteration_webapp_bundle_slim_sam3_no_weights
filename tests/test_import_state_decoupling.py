@@ -4,11 +4,19 @@ import sys
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mask_iteration_webapp.service import RUN_COCO_DIR, RUN_KEEP_DIR, RUN_STATE_DIR, UploadedTargetStore
+from mask_iteration_webapp.service import (
+    RUN_COCO_DIR,
+    RUN_DELETE_DIR,
+    RUN_KEEP_DIR,
+    RUN_LEGACY_KEEP_DIR,
+    RUN_STATE_DIR,
+    UploadedTargetStore,
+)
 
 
 def _png_data_url(color="white"):
@@ -16,6 +24,12 @@ def _png_data_url(color="white"):
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _write_png(path: Path, color="white"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (10, 10), color)
+    image.save(path, format="PNG")
 
 
 def _coco(annotation_id=101, image_name="a.png"):
@@ -325,3 +339,133 @@ def test_batch_import_persists_manifest_once_per_copy(tmp_path):
     assert len(imported["targets"]) == 3
     assert len(manifest_payload["targets"]) == 3
     assert persist_calls == ["copy_a"]
+
+
+def test_import_existing_run_copy_restores_state_without_creating_new_copy(tmp_path):
+    store = UploadedTargetStore(tmp_path / "runs")
+    copy_root = tmp_path / "runs" / "copy_a"
+    _write_png(copy_root / "images" / RUN_KEEP_DIR / "a.png")
+    state_payload = _state_payload()
+    state_payload["coco_file_name"] = "ann.json"
+    state_payload["coco_payload"] = _coco(101)
+    state_path = copy_root / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state_payload), encoding="utf-8")
+
+    imported = store.import_run_copy("copy_a")
+    imported_again = store.import_run_copy("copy_a")
+    manifest_payload = json.loads((copy_root / "manifest.json").read_text(encoding="utf-8"))
+
+    copy_dirs = sorted(path.name for path in (tmp_path / "runs").iterdir() if path.is_dir() and path.name != "manifests")
+    assert copy_dirs == ["copy_a"]
+    assert imported["import_id"] == "copy_a"
+    assert imported["image_set_id"] == "copy_a"
+    assert imported["annotation_state_id"] == "copy_a"
+    assert len(imported["targets"]) == 1
+    assert len(imported["restored_sessions"]) == 1
+    assert imported["targets"][0]["import_id"] == "copy_a"
+    assert Path(imported["targets"][0]["image_path"]).parent == copy_root / "images" / RUN_KEEP_DIR
+    assert (copy_root / "annotations" / RUN_KEEP_DIR / RUN_COCO_DIR / "ann.json").exists()
+    assert len(imported_again["targets"]) == 1
+    assert manifest_payload["import_id"] == "copy_a"
+    assert len(manifest_payload["targets"]) == 1
+    assert len(manifest_payload["source_files"]) == 1
+
+
+def test_import_existing_run_copy_corrects_conflicting_manifest_id(tmp_path):
+    copy_root = tmp_path / "runs" / "copy_c"
+    _write_png(copy_root / "images" / RUN_KEEP_DIR / "a.png")
+    state_payload = _state_payload()
+    state_payload["coco_file_name"] = "ann.json"
+    state_payload["coco_payload"] = _coco(101)
+    state_path = copy_root / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state_payload), encoding="utf-8")
+    stale_target = dict(state_payload["session"]["target"])
+    stale_target["key"] = "stale_key"
+    stale_target["import_id"] = "old_copy"
+    (copy_root / "manifest.json").write_text(
+        json.dumps({"schema_version": 2, "import_id": "old_copy", "targets": [stale_target]}),
+        encoding="utf-8",
+    )
+    store = UploadedTargetStore(tmp_path / "runs")
+
+    imported = store.import_run_copy("copy_c")
+    manifest_payload = json.loads((copy_root / "manifest.json").read_text(encoding="utf-8"))
+
+    assert imported["import_id"] == "copy_c"
+    assert manifest_payload["import_id"] == "copy_c"
+    assert "old_copy" not in store._imports_by_id
+    assert "stale_key" not in store._targets_by_key
+
+
+def test_import_existing_run_copy_falls_back_to_coco_and_ignores_deleted_files(tmp_path):
+    store = UploadedTargetStore(tmp_path / "runs")
+    copy_root = tmp_path / "runs" / "copy_b"
+    _write_png(copy_root / "images" / RUN_KEEP_DIR / "a.png")
+    coco_path = copy_root / "annotations" / RUN_KEEP_DIR / RUN_COCO_DIR / "ann.json"
+    coco_path.parent.mkdir(parents=True, exist_ok=True)
+    coco_path.write_text(json.dumps(_coco(101)), encoding="utf-8")
+    _write_png(copy_root / "images" / RUN_DELETE_DIR / "deleted.png")
+    deleted_coco_path = copy_root / "annotations" / RUN_DELETE_DIR / RUN_COCO_DIR / "deleted.json"
+    deleted_coco_path.parent.mkdir(parents=True, exist_ok=True)
+    deleted_coco_path.write_text(json.dumps(_coco(999, image_name="deleted.png")), encoding="utf-8")
+
+    imported = store.import_run_copy("copy_b")
+
+    assert imported["ok"] is True
+    assert len(imported["targets"]) == 1
+    assert imported["targets"][0]["image_file_name"] == "a.png"
+    assert imported["targets"][0]["annotation_id"] == "101"
+    assert not any(target["image_file_name"] == "deleted.png" for target in imported["targets"])
+    assert (copy_root / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json").exists()
+
+
+def test_import_existing_run_copy_accepts_legacy_chinese_keep_dirs(tmp_path):
+    store = UploadedTargetStore(tmp_path / "runs")
+    copy_root = tmp_path / "runs" / "legacy_copy"
+    _write_png(copy_root / "images" / RUN_LEGACY_KEEP_DIR / "a.png")
+    coco_path = copy_root / "annotations" / RUN_LEGACY_KEEP_DIR / RUN_COCO_DIR / "ann.json"
+    coco_path.parent.mkdir(parents=True, exist_ok=True)
+    coco_path.write_text(json.dumps(_coco(101)), encoding="utf-8")
+
+    imported = store.import_run_copy("legacy_copy")
+
+    assert imported["ok"] is True
+    assert len(imported["targets"]) == 1
+    assert imported["targets"][0]["annotation_id"] == "101"
+
+
+def test_import_existing_run_copy_chunked_persists_progressive_manifest(tmp_path):
+    store = UploadedTargetStore(tmp_path / "runs")
+    copy_root = tmp_path / "runs" / "copy_chunks"
+    for index in range(3):
+        image_name = f"a_{index}.png"
+        annotation_name = f"ann_{index}.json"
+        _write_png(copy_root / "images" / RUN_KEEP_DIR / image_name)
+        coco_path = copy_root / "annotations" / RUN_KEEP_DIR / RUN_COCO_DIR / annotation_name
+        coco_path.parent.mkdir(parents=True, exist_ok=True)
+        coco_path.write_text(
+            json.dumps(_coco(annotation_id=index + 1, image_name=image_name)),
+            encoding="utf-8",
+        )
+
+    first = store.import_run_copy_chunk("copy_chunks", offset=0, limit=2)
+    second = store.import_run_copy_chunk("copy_chunks", offset=2, limit=2)
+    manifest_payload = json.loads((copy_root / "manifest.json").read_text(encoding="utf-8"))
+
+    assert first["progress"] == {"offset": 0, "limit": 2, "processed": 2, "total": 3, "has_more": True}
+    assert second["progress"] == {"offset": 2, "limit": 2, "processed": 3, "total": 3, "has_more": False}
+    assert len(first["targets"]) == 2
+    assert len(second["targets"]) == 1
+    assert len(manifest_payload["targets"]) == 3
+    assert len(manifest_payload["source_files"]) == 3
+
+
+def test_import_existing_run_copy_requires_existing_copy_root(tmp_path):
+    store = UploadedTargetStore(tmp_path / "runs")
+
+    with pytest.raises(FileNotFoundError):
+        store.import_run_copy("missing_copy")
+
+    assert not (tmp_path / "runs" / "missing_copy").exists()

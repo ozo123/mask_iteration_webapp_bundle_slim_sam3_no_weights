@@ -20,7 +20,7 @@ from uuid import uuid4
 
 from PIL import Image, ImageDraw
 
-from .dataset import expand_box_xyxy, round_floats, sanitize_component
+from .dataset import IMAGE_EXTENSIONS, expand_box_xyxy, round_floats, sanitize_component
 from .models import (
     HistoryRecord,
     LineStrokeRecord,
@@ -32,6 +32,7 @@ from .models import (
     copy_locked_regions,
     copy_line_strokes,
     copy_points,
+    drop_system_prompt_points,
     utc_now_iso,
 )
 
@@ -41,13 +42,20 @@ VALIDATE_API_KEY_ENV_VARS = ("SILICONFLOW_API_KEY", "OPENAI_API_KEY", "DASHSCOPE
 VALIDATE_REVIEW_MODE_ORIGINAL = "original_image_box"
 VALIDATE_REVIEW_MODE_CROP_BOX2X = "crop_box2x"
 DEFAULT_VALIDATE_REVIEW_MODE = VALIDATE_REVIEW_MODE_CROP_BOX2X
-RUN_KEEP_DIR = "\u4fdd\u7559"
-RUN_DELETE_DIR = "\u5220\u9664"
+RUN_KEEP_DIR = "keep"
+RUN_DELETE_DIR = "delete"
+RUN_WRONG_DIR = "wrong"
+RUN_LEGACY_KEEP_DIR = "\u4fdd\u7559"
+RUN_LEGACY_DELETE_DIR = "\u5220\u9664"
 RUN_IMAGE_DIR = "images"
 RUN_ANNOTATION_DIR = "annotations"
 RUN_COCO_DIR = "coco"
 RUN_STATE_DIR = "state"
 STATE_EXPORT_FORMAT = "mask_iteration_state"
+TARGET_STATUS_KEEP = "keep"
+TARGET_STATUS_DELETE = "delete"
+TARGET_STATUS_WRONG = "wrong"
+TARGET_STATUSES = {TARGET_STATUS_KEEP, TARGET_STATUS_DELETE, TARGET_STATUS_WRONG}
 
 
 def compact_path_component(text: str, max_length: int = 48) -> str:
@@ -235,6 +243,7 @@ class SessionStore:
             "current_history_id": session.current_history_id,
             "is_deleted": bool(session.is_deleted),
             "deleted_at": session.deleted_at,
+            "target_status": session.target_status,
             "target": session.target.to_dict(),
         }
 
@@ -370,16 +379,50 @@ class UploadedTargetStore:
     def run_annotations_dir(self, copy_id: str | None, status: str = RUN_KEEP_DIR, kind: str = RUN_COCO_DIR) -> Path:
         return self.run_copy_root(copy_id) / RUN_ANNOTATION_DIR / status / kind
 
-    def state_output_path(self, target: TargetRecord, deleted: bool = False) -> Path:
-        status = RUN_DELETE_DIR if deleted else RUN_KEEP_DIR
+    def _existing_status_dir(self, copy_id: str | None, root_name: str, status: str, legacy_status: str | None = None) -> Path:
+        primary = self.run_copy_root(copy_id) / root_name / status
+        if primary.exists() or not legacy_status:
+            return primary
+        legacy = self.run_copy_root(copy_id) / root_name / legacy_status
+        return legacy if legacy.exists() else primary
+
+    def kept_images_dir_for_read(self, copy_id: str | None) -> Path:
+        return self._existing_status_dir(copy_id, RUN_IMAGE_DIR, RUN_KEEP_DIR, RUN_LEGACY_KEEP_DIR)
+
+    def kept_annotations_dir_for_read(self, copy_id: str | None, kind: str = RUN_COCO_DIR) -> Path:
+        primary = self.run_annotations_dir(copy_id, status=RUN_KEEP_DIR, kind=kind)
+        if primary.exists():
+            return primary
+        legacy = self.run_annotations_dir(copy_id, status=RUN_LEGACY_KEEP_DIR, kind=kind)
+        return legacy if legacy.exists() else primary
+
+    def status_image_path(self, target: TargetRecord, status: str) -> Path:
+        return self.run_images_dir(target.import_id, status=status) / Path(target.image_file_name).name
+
+    def status_annotation_path(self, target: TargetRecord, status: str) -> Path:
+        return self.run_annotations_dir(target.import_id, status=status, kind=RUN_COCO_DIR) / Path(target.annotation_file_name).name
+
+    def state_output_path(
+        self,
+        target: TargetRecord,
+        deleted: bool = False,
+        status: str | None = None,
+    ) -> Path:
+        status = status or (RUN_DELETE_DIR if deleted else RUN_KEEP_DIR)
         image_stem = sanitize_component(Path(target.image_file_name).stem or Path(target.annotation_file_name).stem)
         return self.run_annotations_dir(target.import_id, status=status, kind=RUN_STATE_DIR) / f"{image_stem}.json"
 
     def deleted_image_path(self, target: TargetRecord) -> Path:
-        return self.run_images_dir(target.import_id, status=RUN_DELETE_DIR) / Path(target.image_file_name).name
+        return self.status_image_path(target, RUN_DELETE_DIR)
 
     def deleted_annotation_path(self, target: TargetRecord) -> Path:
-        return self.run_annotations_dir(target.import_id, status=RUN_DELETE_DIR, kind=RUN_COCO_DIR) / Path(target.annotation_file_name).name
+        return self.status_annotation_path(target, RUN_DELETE_DIR)
+
+    def wrong_image_path(self, target: TargetRecord) -> Path:
+        return self.status_image_path(target, RUN_WRONG_DIR)
+
+    def wrong_annotation_path(self, target: TargetRecord) -> Path:
+        return self.status_annotation_path(target, RUN_WRONG_DIR)
 
     def images_root(self) -> Path:
         path = self.imports_root / "images"
@@ -446,6 +489,150 @@ class UploadedTargetStore:
                 pass
         path.write_bytes(data)
         return True
+
+    @staticmethod
+    def _write_json_if_changed(path: Path, payload: dict[str, Any]) -> bool:
+        text = json.dumps(payload, ensure_ascii=False, indent=2)
+        if path.exists():
+            try:
+                if path.read_text(encoding="utf-8") == text:
+                    return False
+            except OSError:
+                pass
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return True
+
+    def _require_existing_run_copy_root(self, copy_id: str | None) -> tuple[str, Path]:
+        raw_copy_id = str(copy_id or "").strip()
+        if not raw_copy_id:
+            raise ValueError("Run copy id is required.")
+        normalized_copy_id = sanitize_component(raw_copy_id)
+        copy_root = self.run_copy_root(normalized_copy_id).resolve()
+        runs_root = self.runs_root.resolve()
+        try:
+            copy_root.relative_to(runs_root)
+        except ValueError as error:
+            raise ValueError("Run copy path must stay inside the runs directory.") from error
+        if not copy_root.exists() or not copy_root.is_dir():
+            raise FileNotFoundError(f"Run copy not found: {normalized_copy_id}")
+        return normalized_copy_id, copy_root
+
+    @staticmethod
+    def _relative_path_text(path: Path, root: Path) -> str:
+        try:
+            return path.resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            return path.name
+
+    def _run_copy_image_index(self, copy_root: Path, image_dir: Path) -> dict[str, Any]:
+        images = sorted(
+            path
+            for path in image_dir.rglob("*")
+            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+        ) if image_dir.exists() else []
+        by_path: dict[str, Path] = {}
+        by_name: dict[str, list[Path]] = {}
+        for image_path in images:
+            keys = {
+                image_path.name,
+                self._relative_path_text(image_path, image_dir),
+                self._relative_path_text(image_path, copy_root),
+            }
+            for key in keys:
+                normalized = key.replace("\\", "/").strip("/").lower()
+                if normalized:
+                    by_path[normalized] = image_path
+            by_name.setdefault(image_path.name.lower(), []).append(image_path)
+        return {"images": images, "by_path": by_path, "by_name": by_name}
+
+    @staticmethod
+    def _state_payload_image_candidates(payload: dict[str, Any], annotation_path: Path) -> list[str]:
+        candidates: list[str] = []
+
+        def add(value: Any) -> None:
+            text = str(value or "").replace("\\", "/").strip()
+            if text:
+                candidates.append(text)
+
+        add(payload.get("image_file_name"))
+        add(payload.get("image_filename"))
+        session = payload.get("session")
+        if isinstance(session, dict):
+            target = session.get("target")
+            if isinstance(target, dict):
+                add(target.get("image_file_name"))
+                add(target.get("image_path"))
+        for session_payload in payload.get("sessions", []) or []:
+            if not isinstance(session_payload, dict):
+                continue
+            target = session_payload.get("target")
+            if isinstance(target, dict):
+                add(target.get("image_file_name"))
+                add(target.get("image_path"))
+        for target in payload.get("targets", []) or []:
+            if isinstance(target, dict):
+                add(target.get("image_file_name"))
+                add(target.get("image_path"))
+
+        coco_payload = payload.get("coco_payload") if isinstance(payload.get("coco_payload"), dict) else payload
+        if isinstance(coco_payload, dict):
+            for image in coco_payload.get("images", []) or []:
+                if isinstance(image, dict):
+                    add(image.get("file_name"))
+
+        stem = annotation_path.stem
+        if stem:
+            for suffix in sorted(IMAGE_EXTENSIONS):
+                candidates.append(f"{stem}{suffix}")
+        return list(dict.fromkeys(candidates))
+
+    @staticmethod
+    def _resolve_indexed_image(image_index: dict[str, Any], candidates: list[str]) -> Path | None:
+        by_path: dict[str, Path] = image_index.get("by_path") or {}
+        by_name: dict[str, list[Path]] = image_index.get("by_name") or {}
+        for candidate in candidates:
+            normalized = str(candidate or "").replace("\\", "/").strip("/").lower()
+            if not normalized:
+                continue
+            direct = by_path.get(normalized)
+            if direct is not None:
+                return direct
+            name_matches = by_name.get(Path(normalized).name.lower())
+            if name_matches:
+                return name_matches[0]
+        return None
+
+    def _resolve_state_coco_path(self, payload: dict[str, Any], state_path: Path, coco_dir: Path) -> Path:
+        candidates: list[str] = []
+
+        def add(value: Any) -> None:
+            name = Path(str(value or "")).name
+            if name:
+                candidates.append(name)
+
+        add(payload.get("coco_file_name"))
+        session = payload.get("session")
+        if isinstance(session, dict) and isinstance(session.get("target"), dict):
+            add(session["target"].get("annotation_file_name"))
+        for session_payload in payload.get("sessions", []) or []:
+            if isinstance(session_payload, dict) and isinstance(session_payload.get("target"), dict):
+                add(session_payload["target"].get("annotation_file_name"))
+        for target in payload.get("targets", []) or []:
+            if isinstance(target, dict):
+                add(target.get("annotation_file_name"))
+        candidates.append(f"{state_path.stem}.json")
+
+        fallback: Path | None = None
+        for candidate in dict.fromkeys(candidates):
+            if not candidate.lower().endswith(".json"):
+                continue
+            path = coco_dir / candidate
+            if fallback is None:
+                fallback = path
+            if path.exists():
+                return path
+        return fallback or (coco_dir / f"{state_path.stem}.json")
 
     def get_target(self, key: str) -> TargetRecord:
         if key not in self._targets_by_key:
@@ -1020,6 +1207,351 @@ class UploadedTargetStore:
             "restored_sessions": restored_sessions,
             "errors": errors,
         }
+
+    def _run_copy_import_sources(self, copy_id: str, copy_root: Path) -> dict[str, Any]:
+        image_dir = self.kept_images_dir_for_read(copy_id)
+        state_dir = self.kept_annotations_dir_for_read(copy_id, kind=RUN_STATE_DIR)
+        coco_dir = self.kept_annotations_dir_for_read(copy_id, kind=RUN_COCO_DIR)
+        image_index = self._run_copy_image_index(copy_root, image_dir)
+        image_files: list[Path] = image_index.get("images") or []
+        state_files = sorted(state_dir.rglob("*.json")) if state_dir.exists() else []
+        coco_files = sorted(coco_dir.rglob("*.json")) if coco_dir.exists() else []
+
+        if not image_files:
+            raise ValueError(f"Run copy {copy_id} has no kept images under {RUN_IMAGE_DIR}/{RUN_KEEP_DIR}.")
+        if not state_files and not coco_files:
+            raise ValueError(
+                f"Run copy {copy_id} has no kept state or COCO annotations under {RUN_ANNOTATION_DIR}/{RUN_KEEP_DIR}."
+            )
+        use_state_files = bool(state_files) and (not coco_files or len(state_files) >= len(coco_files))
+        return {
+            "image_index": image_index,
+            "coco_dir": coco_dir,
+            "selected_files": state_files if use_state_files else coco_files,
+            "use_state_files": use_state_files,
+        }
+
+    def _load_run_copy_manifest_payload(self, copy_id: str) -> dict[str, Any]:
+        manifest_path = self._manifest_path(copy_id)
+        if not manifest_path.exists():
+            return {}
+        with contextlib.suppress(Exception):
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                return loaded
+        return {}
+
+    def _clear_run_copy_previous_imports(
+        self,
+        copy_id: str,
+        existing_payload: dict[str, Any],
+        keep_target_keys: set[str] | None = None,
+    ) -> None:
+        keep_target_keys = keep_target_keys or set()
+        previous_import_ids = [copy_id]
+        manifest_import_id = str(existing_payload.get("import_id") or "").strip()
+        if manifest_import_id and manifest_import_id != copy_id:
+            previous_import_ids.append(manifest_import_id)
+        for previous_import_id in previous_import_ids:
+            previous_payload = self._imports_by_id.get(previous_import_id)
+            if previous_payload:
+                for target in previous_payload.get("targets", []) or []:
+                    if isinstance(target, TargetRecord):
+                        target_key = target.key
+                    elif isinstance(target, dict):
+                        target_key = str(target.get("key") or "")
+                    else:
+                        target_key = ""
+                    if target_key and target_key not in keep_target_keys:
+                        self._targets_by_key.pop(target_key, None)
+            if previous_import_id != copy_id:
+                self._imports_by_id.pop(previous_import_id, None)
+                self._manifest_paths_by_id.pop(previous_import_id, None)
+
+    def _import_run_copy_annotation(
+        self,
+        copy_id: str,
+        copy_root: Path,
+        image_index: dict[str, Any],
+        coco_dir: Path,
+        annotation_path: Path,
+        use_state_files: bool,
+        imported_at: str,
+    ) -> dict[str, Any]:
+        annotation_payload = json.loads(annotation_path.read_text(encoding="utf-8"))
+        if isinstance(annotation_payload, list):
+            if len(annotation_payload) != 1 or not isinstance(annotation_payload[0], dict):
+                raise ValueError("Annotation JSON must describe exactly one image.")
+            annotation_payload = annotation_payload[0]
+        if not isinstance(annotation_payload, dict):
+            raise ValueError("Annotation JSON must be an object.")
+
+        if use_state_files:
+            if not self._is_state_annotation_payload(annotation_payload):
+                raise ValueError("State file does not contain a valid working state payload.")
+            image_path = self._resolve_indexed_image(
+                image_index,
+                self._state_payload_image_candidates(annotation_payload, annotation_path),
+            )
+            if image_path is None:
+                raise FileNotFoundError(f"Could not match an image for {annotation_path.name}.")
+            working_annotation_path = self._resolve_state_coco_path(annotation_payload, annotation_path, coco_dir)
+            with Image.open(image_path) as image:
+                actual_width, actual_height = image.size
+            source_key = sanitize_component(Path(working_annotation_path.name).stem or annotation_path.stem)
+            targets, restored_sessions, coco_payload = self._state_restore_payload(
+                annotation_payload=annotation_payload,
+                annotation_path=working_annotation_path,
+                image_path=image_path,
+                image_file_name=image_path.name,
+                annotation_file_name=working_annotation_path.name,
+                import_id=copy_id,
+                imported_at=imported_at,
+                source_key=source_key,
+                actual_width=actual_width,
+                actual_height=actual_height,
+            )
+            if not targets:
+                raise ValueError("State file did not restore any targets.")
+            if isinstance(coco_payload, dict) and coco_payload:
+                self._write_json_if_changed(working_annotation_path, coco_payload)
+            restored_from_working_copy = True
+        else:
+            image_path = self._resolve_indexed_image(
+                image_index,
+                self._state_payload_image_candidates(annotation_payload, annotation_path),
+            )
+            if image_path is None:
+                raise FileNotFoundError(f"Could not match an image for {annotation_path.name}.")
+            with Image.open(image_path) as image:
+                actual_width, actual_height = image.size
+            source_key = sanitize_component(annotation_path.stem)
+            targets = self._build_targets(
+                annotation_payload=annotation_payload,
+                annotation_file_name=annotation_path.name,
+                annotation_path=annotation_path,
+                image_file_name=image_path.name,
+                image_path=image_path,
+                actual_width=actual_width,
+                actual_height=actual_height,
+                import_id=copy_id,
+                imported_at=imported_at,
+                source_key=source_key,
+            )
+            if not targets:
+                raise ValueError("COCO file did not contain any supported bbox targets.")
+            self._write_initial_state_payload(
+                import_id=copy_id,
+                image_file_name=image_path.name,
+                annotation_file_name=annotation_path.name,
+                coco_payload=annotation_payload,
+                targets=targets,
+            )
+            working_annotation_path = annotation_path
+            restored_sessions = []
+            restored_from_working_copy = False
+
+        return {
+            "source_key": source_key,
+            "targets": [target.to_dict() for target in targets],
+            "restored_sessions": restored_sessions,
+            "image_path": image_path,
+            "annotation_path": working_annotation_path,
+            "source_file_key": self._relative_path_text(annotation_path, copy_root),
+            "source_file": {
+                "source_key": source_key,
+                "image_set_id": copy_id,
+                "image_set_label": copy_id,
+                "annotation_state_id": copy_id,
+                "annotation_state_label": copy_id,
+                "image_file_name": image_path.name,
+                "image_relative_path": self._relative_path_text(image_path, copy_root),
+                "image_path": str(image_path.resolve()),
+                "annotation_file_name": working_annotation_path.name,
+                "annotation_relative_path": self._relative_path_text(working_annotation_path, copy_root),
+                "annotation_json_path": str(working_annotation_path.resolve()),
+                "imported_at": imported_at,
+                "restored_from_working_copy": restored_from_working_copy,
+                "source_annotation_file_name": annotation_path.name,
+                "source_annotation_relative_path": self._relative_path_text(annotation_path, copy_root),
+            },
+        }
+
+    def import_run_copy(self, copy_id: str | None) -> dict[str, Any]:
+        copy_id, copy_root = self._require_existing_run_copy_root(copy_id)
+        sources = self._run_copy_import_sources(copy_id, copy_root)
+        imported_at = utc_now_iso()
+        existing_payload = self._load_run_copy_manifest_payload(copy_id)
+        selected_files = sources["selected_files"]
+        use_state_files = bool(sources["use_state_files"])
+        targets_by_key: dict[str, dict[str, Any]] = {}
+        source_files_by_key: dict[str, dict[str, Any]] = {}
+        restored_sessions: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        first_image_path: Path | None = None
+        first_annotation_path: Path | None = None
+        first_image_name = ""
+        first_annotation_name = ""
+
+        for annotation_path in selected_files:
+            try:
+                imported = self._import_run_copy_annotation(
+                    copy_id=copy_id,
+                    copy_root=copy_root,
+                    image_index=sources["image_index"],
+                    coco_dir=sources["coco_dir"],
+                    annotation_path=annotation_path,
+                    use_state_files=use_state_files,
+                    imported_at=imported_at,
+                )
+                for target in imported["targets"]:
+                    targets_by_key[str(target.get("key") or "")] = target
+                restored_sessions.extend(imported["restored_sessions"])
+                source_files_by_key[imported["source_file_key"]] = imported["source_file"]
+                if first_image_path is None:
+                    first_image_path = imported["image_path"]
+                    first_annotation_path = imported["annotation_path"]
+                    first_image_name = imported["image_path"].name
+                    first_annotation_name = imported["annotation_path"].name
+            except Exception as error:
+                errors.append(
+                    {
+                        "annotation_file_name": annotation_path.name,
+                        "annotation_relative_path": self._relative_path_text(annotation_path, copy_root),
+                        "error": str(error),
+                    }
+                )
+
+        if not targets_by_key:
+            details = "; ".join(item["error"] for item in errors[:5])
+            raise ValueError(details or f"Run copy {copy_id} did not contain any importable targets.")
+
+        self._clear_run_copy_previous_imports(copy_id, existing_payload, set(targets_by_key.keys()))
+
+        manifest_payload = {
+            "schema_version": 2,
+            "import_id": copy_id,
+            "import_session_label": existing_payload.get("import_session_label") or copy_id,
+            "imported_at": existing_payload.get("imported_at") or imported_at,
+            "updated_at": imported_at,
+            "copy_root": str(copy_root.resolve()),
+            "image_set_id": copy_id,
+            "image_set_label": copy_id,
+            "annotation_state_id": copy_id,
+            "annotation_state_label": copy_id,
+            "image_file_name": first_image_name,
+            "image_path": str(first_image_path.resolve()) if first_image_path else None,
+            "annotation_file_name": first_annotation_name,
+            "annotation_json_path": str(first_annotation_path.resolve()) if first_annotation_path else None,
+            "restored_from_working_copy": use_state_files,
+            "source_files": list(source_files_by_key.values()),
+            "targets": list(targets_by_key.values()),
+        }
+        self._persist_manifest_payload(copy_id, manifest_payload)
+
+        response_payload = dict(manifest_payload)
+        response_payload["targets"] = list(targets_by_key.values())
+        response_payload["restored_sessions"] = restored_sessions
+        response_payload["errors"] = errors
+        response_payload["ok"] = not errors
+        return response_payload
+
+    def import_run_copy_chunk(self, copy_id: str | None, offset: int = 0, limit: int = 16) -> dict[str, Any]:
+        copy_id, copy_root = self._require_existing_run_copy_root(copy_id)
+        offset = max(0, int(offset or 0))
+        limit = max(1, min(100, int(limit or 16)))
+        sources = self._run_copy_import_sources(copy_id, copy_root)
+        selected_files: list[Path] = sources["selected_files"]
+        total = len(selected_files)
+        chunk_files = selected_files[offset : offset + limit]
+        imported_at = utc_now_iso()
+        existing_payload = self._load_run_copy_manifest_payload(copy_id)
+        if offset == 0:
+            self._clear_run_copy_previous_imports(copy_id, existing_payload)
+            existing_payload = {}
+
+        target_payloads_by_key = {
+            str(item.get("key") or ""): item
+            for item in existing_payload.get("targets", [])
+            if isinstance(item, dict)
+        }
+        source_files_by_key = {
+            str(item.get("source_annotation_relative_path") or item.get("annotation_relative_path") or item.get("annotation_file_name") or ""): item
+            for item in existing_payload.get("source_files", [])
+            if isinstance(item, dict)
+        }
+        chunk_targets: list[dict[str, Any]] = []
+        restored_sessions: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        first_image_path: Path | None = None
+        first_annotation_path: Path | None = None
+
+        for annotation_path in chunk_files:
+            try:
+                imported = self._import_run_copy_annotation(
+                    copy_id=copy_id,
+                    copy_root=copy_root,
+                    image_index=sources["image_index"],
+                    coco_dir=sources["coco_dir"],
+                    annotation_path=annotation_path,
+                    use_state_files=bool(sources["use_state_files"]),
+                    imported_at=imported_at,
+                )
+                for target in imported["targets"]:
+                    key = str(target.get("key") or "")
+                    target_payloads_by_key[key] = target
+                    chunk_targets.append(target)
+                source_files_by_key[imported["source_file_key"]] = imported["source_file"]
+                restored_sessions.extend(imported["restored_sessions"])
+                if first_image_path is None:
+                    first_image_path = imported["image_path"]
+                    first_annotation_path = imported["annotation_path"]
+            except Exception as error:
+                errors.append(
+                    {
+                        "annotation_file_name": annotation_path.name,
+                        "annotation_relative_path": self._relative_path_text(annotation_path, copy_root),
+                        "error": str(error),
+                    }
+                )
+
+        all_targets = list(target_payloads_by_key.values())
+        existing_first = all_targets[0] if all_targets else {}
+        manifest_payload = {
+            "schema_version": 2,
+            "import_id": copy_id,
+            "import_session_label": existing_payload.get("import_session_label") or copy_id,
+            "imported_at": existing_payload.get("imported_at") or imported_at,
+            "updated_at": imported_at,
+            "copy_root": str(copy_root.resolve()),
+            "image_set_id": copy_id,
+            "image_set_label": copy_id,
+            "annotation_state_id": copy_id,
+            "annotation_state_label": copy_id,
+            "image_file_name": (first_image_path.name if first_image_path else existing_payload.get("image_file_name") or existing_first.get("image_file_name")),
+            "image_path": (str(first_image_path.resolve()) if first_image_path else existing_payload.get("image_path") or existing_first.get("image_path")),
+            "annotation_file_name": (first_annotation_path.name if first_annotation_path else existing_payload.get("annotation_file_name") or existing_first.get("annotation_file_name")),
+            "annotation_json_path": (str(first_annotation_path.resolve()) if first_annotation_path else existing_payload.get("annotation_json_path") or existing_first.get("annotation_json_path")),
+            "restored_from_working_copy": bool(sources["use_state_files"]),
+            "source_files": list(source_files_by_key.values()),
+            "targets": all_targets,
+        }
+        self._persist_manifest_payload(copy_id, manifest_payload)
+
+        processed = min(total, offset + len(chunk_files))
+        response_payload = dict(manifest_payload)
+        response_payload["targets"] = chunk_targets
+        response_payload["restored_sessions"] = restored_sessions
+        response_payload["errors"] = errors
+        response_payload["ok"] = not errors
+        response_payload["progress"] = {
+            "offset": offset,
+            "limit": limit,
+            "processed": processed,
+            "total": total,
+            "has_more": processed < total,
+        }
+        return response_payload
 
     def _load_existing_manifests(self) -> None:
         manifest_paths = (
@@ -1869,8 +2401,9 @@ class MaskIterationService:
         }
 
     def _state_dir_pairing_report(self, image_set_id: str, annotation_state_id: str) -> dict[str, Any]:
-        image_dir = self.target_store.run_images_dir(annotation_state_id or image_set_id or "default_state", status=RUN_KEEP_DIR)
-        annotation_dir = self.target_store.run_annotations_dir(annotation_state_id or image_set_id or "default_state", status=RUN_KEEP_DIR, kind=RUN_COCO_DIR)
+        copy_id = annotation_state_id or image_set_id or "default_state"
+        image_dir = self.target_store.kept_images_dir_for_read(copy_id)
+        annotation_dir = self.target_store.kept_annotations_dir_for_read(copy_id, kind=RUN_COCO_DIR)
         image_files = sorted(
             path for path in image_dir.rglob("*") if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
         ) if image_dir.exists() else []
@@ -2220,7 +2753,10 @@ class MaskIterationService:
 
     def _save_state_output(self, session: SessionState) -> Path:
         target = session.target
-        state_path = self.target_store.state_output_path(target, deleted=bool(session.is_deleted))
+        target_status = session.target_status if session.target_status in TARGET_STATUSES else (
+            TARGET_STATUS_DELETE if session.is_deleted else TARGET_STATUS_KEEP
+        )
+        state_path = self.target_store.state_output_path(target, status=target_status)
         coco_payload = None
         coco_path = Path(target.annotation_json_path)
         if coco_path.exists():
@@ -2232,7 +2768,7 @@ class MaskIterationService:
                 loaded = json.loads(state_path.read_text(encoding="utf-8"))
                 if isinstance(loaded, dict):
                     existing_payload = loaded
-        elif not session.is_deleted:
+        elif target_status == TARGET_STATUS_KEEP:
             existing_payload = {
                 "targets": [target.to_dict()],
                 "sessions": [],
@@ -2266,6 +2802,7 @@ class MaskIterationService:
             "copy_id": target.import_id,
             "image_file_name": target.image_file_name,
             "coco_file_name": target.annotation_file_name,
+            "target_status": target_status,
             "coco_payload": coco_payload if isinstance(coco_payload, dict) else existing_payload.get("coco_payload"),
             "targets": list(targets_by_identity.values()),
             "sessions": list(sessions_by_identity.values()),
@@ -2273,8 +2810,8 @@ class MaskIterationService:
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        if session.is_deleted:
-            kept_state_path = self.target_store.state_output_path(target, deleted=False)
+        if target_status != TARGET_STATUS_KEEP:
+            kept_state_path = self.target_store.state_output_path(target, status=RUN_KEEP_DIR)
             if kept_state_path.exists() and kept_state_path != state_path:
                 with contextlib.suppress(Exception):
                     kept_payload = json.loads(kept_state_path.read_text(encoding="utf-8"))
@@ -2333,7 +2870,12 @@ class MaskIterationService:
             merged.append(item)
         return merged
 
-    def _write_deleted_coco_annotation_payload(self, target: TargetRecord, payload: dict[str, Any]) -> None:
+    def _write_deleted_coco_annotation_payload(
+        self,
+        target: TargetRecord,
+        payload: dict[str, Any],
+        status: str = RUN_DELETE_DIR,
+    ) -> None:
         if not isinstance(payload.get("annotations"), list):
             return
         annotation_id = str(target.source_annotation_id or target.annotation_id)
@@ -2370,7 +2912,7 @@ class MaskIterationService:
             if deleted_categories:
                 deleted_payload["categories"] = deleted_categories
 
-        deleted_annotation_path = self.target_store.deleted_annotation_path(target)
+        deleted_annotation_path = self.target_store.status_annotation_path(target, status=status)
         if deleted_annotation_path.exists():
             with contextlib.suppress(Exception):
                 existing_payload = json.loads(deleted_annotation_path.read_text(encoding="utf-8"))
@@ -2394,13 +2936,38 @@ class MaskIterationService:
 
         self._write_target_annotation_payload(deleted_annotation_path, deleted_payload)
 
-    def _remove_target_from_annotation_copy(self, target: TargetRecord) -> None:
+    def _write_removed_labelstudio_payload(self, target: TargetRecord, payload: dict[str, Any], status: str) -> None:
+        if not isinstance(payload.get("results"), list):
+            return
+        annotation_id = str(target.source_annotation_id or target.annotation_id)
+        removed_results = [
+            deepcopy(result)
+            for index, result in enumerate(payload.get("results", []))
+            if isinstance(result, dict)
+            and (str(result.get("id")) == annotation_id or int(index) == int(target.result_index))
+        ]
+        if not removed_results:
+            return
+        removed_payload = deepcopy(payload)
+        removed_payload["results"] = removed_results
+        removed_path = self.target_store.status_annotation_path(target, status=status)
+        if removed_path.exists():
+            with contextlib.suppress(Exception):
+                existing_payload = json.loads(removed_path.read_text(encoding="utf-8"))
+                if isinstance(existing_payload, dict) and isinstance(existing_payload.get("results"), list):
+                    existing_ids = {str(item.get("id") or "") for item in existing_payload.get("results", []) if isinstance(item, dict)}
+                    removed_payload["results"] = list(existing_payload.get("results", [])) + [
+                        item for item in removed_results if str(item.get("id") or "") not in existing_ids
+                    ]
+        self._write_target_annotation_payload(removed_path, removed_payload)
+
+    def _remove_target_from_annotation_copy(self, target: TargetRecord, status: str = RUN_DELETE_DIR) -> None:
         annotation_path, payload = self._load_target_annotation_payload(target)
         if annotation_path is None or payload is None:
             return
         annotation_id = str(target.source_annotation_id or target.annotation_id)
         if isinstance(payload.get("annotations"), list):
-            self._write_deleted_coco_annotation_payload(target, payload)
+            self._write_deleted_coco_annotation_payload(target, payload, status=status)
             payload["annotations"] = [
                 annotation
                 for annotation in payload.get("annotations", [])
@@ -2410,6 +2977,7 @@ class MaskIterationService:
             return
 
         if isinstance(payload.get("results"), list):
+            self._write_removed_labelstudio_payload(target, payload, status=status)
             payload["results"] = [
                 result
                 for index, result in enumerate(payload.get("results", []))
@@ -2492,9 +3060,15 @@ class MaskIterationService:
 
         with contextlib.suppress(Exception):
             image_path = Path(target.image_path)
-            image_root = self.target_store.run_images_dir(target.import_id, status=RUN_KEEP_DIR).resolve()
+            image_roots = [
+                self.target_store.run_images_dir(target.import_id, status=RUN_KEEP_DIR).resolve(),
+                self.target_store.run_images_dir(target.import_id, status=RUN_LEGACY_KEEP_DIR).resolve(),
+            ]
             resolved_image_path = image_path.resolve()
-            if image_path.exists() and (resolved_image_path == image_root or image_root in resolved_image_path.parents):
+            if image_path.exists() and any(
+                resolved_image_path == image_root or image_root in resolved_image_path.parents
+                for image_root in image_roots
+            ):
                 deleted_image_path = self.target_store.deleted_image_path(target)
                 deleted_image_path.parent.mkdir(parents=True, exist_ok=True)
                 if deleted_image_path.exists():
@@ -2585,6 +3159,7 @@ class MaskIterationService:
                     if image_session is None:
                         continue
                     image_session.is_deleted = True
+                    image_session.target_status = TARGET_STATUS_DELETE
                     image_session.deleted_at = now
                     image_session.updated_at = now
                     self._save_session_outputs(image_session)
@@ -3230,7 +3805,7 @@ class MaskIterationService:
             mask_area=int(mask_bool.sum()),
             mask_bbox_xywh=self.inference_service._mask_to_xywh(mask_bool),
             prompt_box_xyxy=deepcopy(session.prompt_box_xyxy),
-            manual_points_snapshot=copy_points(session.working_points),
+            manual_points_snapshot=drop_system_prompt_points(copy_points(session.working_points)),
             line_strokes_snapshot=copy_line_strokes(session.line_strokes),
             locked_regions_snapshot=copy_locked_regions(session.locked_regions),
             system_prompt_points=copy_points(session.system_prompt_points),
@@ -3450,9 +4025,29 @@ class MaskIterationService:
         response["ok"] = not response["errors"]
         return response
 
+    def import_run_copy(self, copy_id: str | None) -> dict[str, Any]:
+        manifest = self.target_store.import_run_copy(copy_id)
+        response = self._prepare_import_response(manifest)
+        response["errors"] = manifest.get("errors") or []
+        response["ok"] = not response["errors"]
+        return response
+
+    def import_run_copy_chunk(self, copy_id: str | None, offset: int = 0, limit: int = 16) -> dict[str, Any]:
+        manifest = self.target_store.import_run_copy_chunk(copy_id=copy_id, offset=offset, limit=limit)
+        response = self._prepare_import_response(manifest)
+        response["errors"] = manifest.get("errors") or []
+        response["ok"] = not response["errors"]
+        response["progress"] = manifest.get("progress") or {}
+        return response
+
     def _restore_session_from_run_state(self, target: TargetRecord) -> SessionState | None:
-        for deleted in (False, True):
-            state_path = self.target_store.state_output_path(target, deleted=deleted)
+        status_paths = [
+            (TARGET_STATUS_KEEP, self.target_store.state_output_path(target, status=RUN_KEEP_DIR)),
+            (TARGET_STATUS_DELETE, self.target_store.state_output_path(target, status=RUN_DELETE_DIR)),
+            (TARGET_STATUS_WRONG, self.target_store.state_output_path(target, status=RUN_WRONG_DIR)),
+            (TARGET_STATUS_DELETE, self.target_store.state_output_path(target, status=RUN_LEGACY_DELETE_DIR)),
+        ]
+        for target_status, state_path in status_paths:
             if not state_path.exists():
                 continue
             try:
@@ -3476,7 +4071,8 @@ class MaskIterationService:
                 continue
             session_payload["session_id"] = target.key
             session_payload["target"] = target.to_dict()
-            if deleted:
+            session_payload["target_status"] = target_status
+            if target_status != TARGET_STATUS_KEEP:
                 session_payload["is_deleted"] = True
             try:
                 return SessionState.from_dict(session_payload)
@@ -3688,6 +4284,7 @@ class MaskIterationService:
             session = self._require_session(target_key)
             deleted_at = utc_now_iso()
             session.is_deleted = True
+            session.target_status = TARGET_STATUS_DELETE
             session.deleted_at = deleted_at
             session.updated_at = deleted_at
             self._save_session_outputs(session)
@@ -3724,6 +4321,58 @@ class MaskIterationService:
                 "bootstrap": self.bootstrap_payload(),
             }
 
+    def mark_wrong_target(self, target_key: str) -> dict[str, Any]:
+        with self._lock:
+            session = self._require_session(target_key)
+            marked_at = utc_now_iso()
+            session.is_deleted = True
+            session.target_status = TARGET_STATUS_WRONG
+            session.deleted_at = marked_at
+            session.updated_at = marked_at
+            self._save_session_outputs(session)
+            target = session.target
+            self.session_store.add_target_deletion_record(
+                {
+                    "deletion_id": f"target_wrong_{uuid4().hex[:12]}",
+                    "scope": "target",
+                    "target_status": TARGET_STATUS_WRONG,
+                    "deleted_at": marked_at,
+                    "source": "mask_iteration_webapp",
+                    "session_id": session.session_id,
+                    "target_key": target.key,
+                    "annotation_id": target.annotation_id,
+                    "source_annotation_id": target.source_annotation_id,
+                    "result_index": target.result_index,
+                    "category_id": target.category_id,
+                    "category_name": target.category_name,
+                    "image_file_name": target.image_file_name,
+                    "annotation_file_name": target.annotation_file_name,
+                    "annotation_json_path": target.annotation_json_path,
+                    "import_id": target.import_id,
+                    "imported_at": target.imported_at,
+                    "bbox_xywh": target.bbox_xywh,
+                    "bbox_xyxy": target.bbox_xyxy,
+                }
+            )
+            self._remove_target_from_annotation_copy(target, status=RUN_WRONG_DIR)
+            wrong_image_path = self.target_store.wrong_image_path(target)
+            source_image_path = Path(target.image_path)
+            if source_image_path.exists():
+                wrong_image_path.parent.mkdir(parents=True, exist_ok=True)
+                if source_image_path.resolve() != wrong_image_path.resolve():
+                    shutil.copy2(source_image_path, wrong_image_path)
+            self.target_store.remove_targets({target.key})
+            return {
+                "ok": True,
+                "wrong_target_key": target_key,
+                "deleted_target_key": target_key,
+                "target_status": TARGET_STATUS_WRONG,
+                "marked_at": marked_at,
+                "target": session.target.to_dict(),
+                "wrong_image_path": str(wrong_image_path.resolve()),
+                "bootstrap": self.bootstrap_payload(),
+            }
+
     def delete_image(self, target_key: str) -> dict[str, Any]:
         with self._lock:
             target = self.target_store.get_target(target_key)
@@ -3740,6 +4389,7 @@ class MaskIterationService:
                 if session is None:
                     continue
                 session.is_deleted = True
+                session.target_status = TARGET_STATUS_DELETE
                 session.deleted_at = deleted_at
                 session.updated_at = deleted_at
                 self._save_session_outputs(session)
@@ -3801,6 +4451,7 @@ class MaskIterationService:
                 session.text_prompt = str(text_prompt or "").strip()
             if line_strokes is not None:
                 session.line_strokes = self._normalize_line_strokes(session, line_strokes)
+            session.working_points = drop_system_prompt_points(session.working_points)
             current = session.current_history()
             previous_logits = self._ensure_history_logits(session, current)
             effective_points = copy_points(session.working_points)
@@ -3846,7 +4497,7 @@ class MaskIterationService:
             session = self._require_session(target_key)
             history_item = session.history_by_id(history_id)
             session.current_history_id = history_item.history_id
-            session.working_points = copy_points(history_item.manual_points_snapshot)
+            session.working_points = drop_system_prompt_points(copy_points(history_item.manual_points_snapshot))
             session.line_strokes = copy_line_strokes(history_item.line_strokes_snapshot)
             session.locked_regions = copy_locked_regions(history_item.locked_regions_snapshot)
             session.text_prompt = history_item.text_prompt
@@ -3877,7 +4528,7 @@ class MaskIterationService:
             if session.current_history_id in delete_ids:
                 fallback = session.history[-1]
                 session.current_history_id = fallback.history_id
-                session.working_points = copy_points(fallback.manual_points_snapshot)
+                session.working_points = drop_system_prompt_points(copy_points(fallback.manual_points_snapshot))
                 session.line_strokes = copy_line_strokes(fallback.line_strokes_snapshot)
                 session.locked_regions = copy_locked_regions(fallback.locked_regions_snapshot)
                 session.text_prompt = fallback.text_prompt
@@ -3933,6 +4584,7 @@ class MaskIterationService:
                 "history": [item.to_dict() for item in session.history],
                 "is_deleted": session.is_deleted,
                 "deleted_at": session.deleted_at,
+                "target_status": session.target_status,
             }
             ,
             "validate_tools": self._validate_tools_session_payload(session),
@@ -3954,9 +4606,10 @@ class MaskIterationService:
             "has_session": bool(meta.get("has_session")),
             "history_count": int(meta.get("history_count", 0)),
             "updated_at": meta.get("updated_at"),
-            "is_deleted": bool(meta.get("is_deleted", False)),
-            "deleted_at": meta.get("deleted_at"),
-        }
+                "is_deleted": bool(meta.get("is_deleted", False)),
+                "deleted_at": meta.get("deleted_at"),
+                "target_status": meta.get("target_status") or ("delete" if bool(meta.get("is_deleted", False)) else "keep"),
+            }
 
     @staticmethod
     def _clamp(value: float, lower: float, upper: float) -> float:

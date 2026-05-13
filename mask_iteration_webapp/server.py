@@ -76,6 +76,22 @@ def create_handler(service, static_dir: Path):
                         service.import_targets_batch(payload.get("items")),
                     )
 
+                if path == "/api/import-run-copy":
+                    return self._send_json(
+                        HTTPStatus.OK,
+                        service.import_run_copy(copy_id=payload.get("copy_id")),
+                    )
+
+                if path == "/api/import-run-copy/chunk":
+                    return self._send_json(
+                        HTTPStatus.OK,
+                        service.import_run_copy_chunk(
+                            copy_id=payload.get("copy_id"),
+                            offset=int(payload.get("offset") or 0),
+                            limit=int(payload.get("limit") or 16),
+                        ),
+                    )
+
                 if path == "/api/open-session":
                     target_key = str(payload.get("target_key", "")).strip()
                     return self._send_json(HTTPStatus.OK, service.open_session(target_key))
@@ -151,6 +167,10 @@ def create_handler(service, static_dir: Path):
                 if path.startswith("/api/sessions/") and path.endswith("/delete-target"):
                     target_key = unquote(path[len("/api/sessions/") : -len("/delete-target")]).strip("/")
                     return self._send_json(HTTPStatus.OK, service.delete_target(target_key))
+
+                if path.startswith("/api/sessions/") and path.endswith("/mark-wrong-target"):
+                    target_key = unquote(path[len("/api/sessions/") : -len("/mark-wrong-target")]).strip("/")
+                    return self._send_json(HTTPStatus.OK, service.mark_wrong_target(target_key))
 
                 if path.startswith("/api/sessions/") and path.endswith("/delete-image"):
                     target_key = unquote(path[len("/api/sessions/") : -len("/delete-image")]).strip("/")

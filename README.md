@@ -73,11 +73,15 @@ third_party/sam3/checkpoints/sam3.pt
 ```text
 runs/
   <图片集或标注状态>/
-    images/保留/
-    images/删除/
-    annotations/保留/coco/
-    annotations/保留/state/
-    annotations/删除/coco/
+    images/keep/
+    images/delete/
+    images/wrong/
+    annotations/keep/coco/
+    annotations/keep/state/
+    annotations/delete/coco/
+    annotations/delete/state/
+    annotations/wrong/coco/
+    annotations/wrong/state/
     manifest.json
   sessions/
 ```

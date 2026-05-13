@@ -12,6 +12,7 @@ from mask_iteration_webapp.service import (
     RUN_COCO_DIR,
     RUN_DELETE_DIR,
     RUN_KEEP_DIR,
+    RUN_WRONG_DIR,
     RUN_STATE_DIR,
     MaskIterationService,
     SessionStore,
@@ -184,6 +185,34 @@ def test_delete_target_writes_deleted_coco_and_state(tmp_path):
     assert not kept_state_path.exists()
     deleted_state = json.loads(deleted_state_path.read_text(encoding="utf-8"))
     assert deleted_state["sessions"][0]["is_deleted"] is True
+
+
+def test_mark_wrong_target_writes_wrong_coco_state_and_copies_image(tmp_path):
+    target_store = UploadedTargetStore(tmp_path / "runs")
+    service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
+    target = _target(tmp_path)
+    target_store._targets_by_key[target.key] = target
+    session = _session(target, current_history_id="iter1")
+    service._save_session_outputs(session)
+
+    service.mark_wrong_target("target_a")
+
+    kept_coco = json.loads(Path(session.target.annotation_json_path).read_text(encoding="utf-8"))
+    assert kept_coco["annotations"] == []
+
+    wrong_coco_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_WRONG_DIR / RUN_COCO_DIR / "ann.json"
+    wrong_coco = json.loads(wrong_coco_path.read_text(encoding="utf-8"))
+    assert wrong_coco["annotations"][0]["id"] == 101
+    assert wrong_coco["annotations"][0]["segmentation"]["points"] == [[2, 2]]
+
+    wrong_state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_WRONG_DIR / RUN_STATE_DIR / "a.json"
+    wrong_state = json.loads(wrong_state_path.read_text(encoding="utf-8"))
+    assert wrong_state["target_status"] == "wrong"
+    assert wrong_state["sessions"][0]["target_status"] == "wrong"
+
+    assert (tmp_path / "runs" / "copy_a" / "images" / RUN_KEEP_DIR / "a.png").exists()
+    assert (tmp_path / "runs" / "copy_a" / "images" / RUN_WRONG_DIR / "a.png").exists()
+    assert "target_a" not in target_store._targets_by_key
 
 
 def test_open_session_restores_from_run_state_when_session_cache_is_missing(tmp_path):

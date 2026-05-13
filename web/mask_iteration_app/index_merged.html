@@ -200,6 +200,7 @@
       cursor: not-allowed;
     }
     #importBtn,
+    #importRunCopyBtn,
     #exportWorkDatasetBtn,
     #iterateBtn,
     #validateRunBtn {
@@ -208,6 +209,7 @@
       color: #fff;
     }
     #deleteTargetBtn,
+    #markWrongTargetBtn,
     #deleteImageBtn {
       border-color: rgba(200, 53, 43, 0.45);
       background: var(--red-soft);
@@ -383,6 +385,14 @@
       border-color: rgba(183, 106, 18, 0.42);
       background: var(--amber-soft);
       color: #71420c;
+    }
+    .import-progress {
+      width: 100%;
+      height: 8px;
+      accent-color: var(--blue);
+    }
+    .import-progress[hidden] {
+      display: none;
     }
     .button-row button,
     .toggle-row button,
@@ -776,6 +786,13 @@
                     </div>
                   </div>
                   <button id="importBtn" class="import-export-action" type="button">导入文件夹</button>
+                  <div class="import-export-row">
+                    <div class="field">
+                      <label for="runCopyFolderUpload">导入已有副本文件夹</label>
+                      <input id="runCopyFolderUpload" type="file" webkitdirectory directory multiple>
+                    </div>
+                  </div>
+                  <button id="importRunCopyBtn" class="import-export-action" type="button">导入当前副本</button>
                 </div>
                 <div class="import-export-column">
                   <div class="import-export-row">
@@ -901,6 +918,7 @@
             <button id="clearPointsBtn" type="button">清空点</button>
             <button id="clearLinesBtn" type="button">清空线</button>
             <button id="deleteTargetBtn" type="button">删除当前框</button>
+            <button id="markWrongTargetBtn" type="button">错误框</button>
             <button id="deleteImageBtn" type="button">删除整张图</button>
             <button id="markDifficultBtn" type="button">标记难处理</button>
             <button id="markBlurryImageBtn" type="button">标记模糊图</button>
@@ -919,6 +937,7 @@
             </div>
           </div>
           <div id="status" class="status">等待导入图片和标注。</div>
+          <progress id="importProgress" class="import-progress" value="0" max="100" hidden></progress>
         </div>
       </div>
 
@@ -1015,10 +1034,12 @@
     const el = {
       imageFolderUpload: document.getElementById("imageFolderUpload"),
       annotationFolderUpload: document.getElementById("annotationFolderUpload"),
+      runCopyFolderUpload: document.getElementById("runCopyFolderUpload"),
       annotationStateNameInput: document.getElementById("annotationStateNameInput"),
       exportDatasetNameInput: document.getElementById("exportDatasetNameInput"),
       exportWorkDatasetBtn: document.getElementById("exportWorkDatasetBtn"),
       importBtn: document.getElementById("importBtn"),
+      importRunCopyBtn: document.getElementById("importRunCopyBtn"),
       queueMetric: document.getElementById("queueMetric"),
       savedAnnotationSummary: document.getElementById("savedAnnotationSummary"),
       sourceSummary: document.getElementById("sourceSummary"),
@@ -1030,6 +1051,7 @@
       targetSummary: document.getElementById("targetSummary"),
       maskOpacity: document.getElementById("maskOpacity"),
       compareOpacity: document.getElementById("compareOpacity"),
+      importProgress: document.getElementById("importProgress"),
       variantName: document.getElementById("variantName"),
       notesInput: document.getElementById("notesInput"),
       toggleBBoxBtn: document.getElementById("toggleBBoxBtn"),
@@ -1050,6 +1072,7 @@
       clearPointsBtn: document.getElementById("clearPointsBtn"),
       clearLinesBtn: document.getElementById("clearLinesBtn"),
       deleteTargetBtn: document.getElementById("deleteTargetBtn"),
+      markWrongTargetBtn: document.getElementById("markWrongTargetBtn"),
       deleteImageBtn: document.getElementById("deleteImageBtn"),
       markDifficultBtn: document.getElementById("markDifficultBtn"),
       markBlurryImageBtn: document.getElementById("markBlurryImageBtn"),
@@ -1090,6 +1113,7 @@
     };
 
     const IMPORT_BATCH_SIZE = 4;
+    const RUN_COPY_IMPORT_CHUNK_SIZE = 16;
     const FOCUS_CONTEXT_SCALE_FACTOR = 3.9;
 
     const state = {
@@ -1343,6 +1367,23 @@
       el.status.classList.toggle("warn", Boolean(warn));
     }
 
+    function setImportProgress(value, max, label = "") {
+      if (!el.importProgress) return;
+      const normalizedMax = Math.max(1, Number(max || 1));
+      const normalizedValue = Math.min(normalizedMax, Math.max(0, Number(value || 0)));
+      el.importProgress.hidden = false;
+      el.importProgress.max = normalizedMax;
+      el.importProgress.value = normalizedValue;
+      el.importProgress.title = label || `${normalizedValue} / ${normalizedMax}`;
+    }
+
+    function clearImportProgress() {
+      if (!el.importProgress) return;
+      el.importProgress.hidden = true;
+      el.importProgress.value = 0;
+      el.importProgress.title = "";
+    }
+
     function setBusy(message) {
       state.busy = true;
       setStatus(message, false);
@@ -1351,6 +1392,7 @@
 
     function clearBusy(message) {
       state.busy = false;
+      clearImportProgress();
       setStatus(message, false);
       renderButtons();
     }
@@ -1421,6 +1463,7 @@
       const validateAvailable = Boolean(state.bootstrap && state.bootstrap.validate_tools && state.bootstrap.validate_tools.available);
       el.exportWorkDatasetBtn.disabled = !state.currentAnnotationStateId || state.busy;
       el.importBtn.disabled = state.busy;
+      el.importRunCopyBtn.disabled = state.busy;
       el.prevTargetBtn.disabled = !hasTargets || state.busy;
       el.nextTargetBtn.disabled = !hasTargets || state.busy;
       el.iterateBtn.disabled = !hasSession || state.busy;
@@ -1436,6 +1479,7 @@
       el.commitRegionBtn.disabled = !hasSession || state.busy || !canCommitRegion;
       el.cancelRegionBtn.disabled = !hasSession || state.busy || !hasRegionDraft;
       el.deleteTargetBtn.disabled = !hasSession || state.busy;
+      el.markWrongTargetBtn.disabled = !hasSession || state.busy;
       el.deleteImageBtn.disabled = !hasSession || state.busy;
       el.markDifficultBtn.disabled = !hasSession || state.busy;
       el.markBlurryImageBtn.disabled = !hasSession || state.busy;
@@ -1826,7 +1870,8 @@
         ["缩放", `${state.zoomPercent}%`],
         ["当前分数", current && current.score != null ? current.score.toFixed(4) : "-"],
         ["对比轮次", compare ? compare.name : "无"],
-        ["删除状态", state.session.is_deleted ? `deleted @ ${state.session.deleted_at || "-"}` : "active"],
+        ["目标状态", state.session.target_status || (state.session.is_deleted ? "delete" : "keep")],
+        ["移除时间", state.session.deleted_at || "-"],
       ];
       el.metaGrid.innerHTML = cards.map(([k, v]) => `
         <div class="meta-card">
@@ -2661,6 +2706,18 @@
         .slice(0, 96) || "dataset";
     }
 
+    function sanitizeRunCopyId(text) {
+      return String(text || "dataset")
+        .trim()
+        .replace(/[^\w\u4e00-\u9fff-]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 96) || "dataset";
+    }
+
+    function isKeepStatusDir(part) {
+      return part === "keep" || part === "保留";
+    }
+
     function makeImportSessionId(folderLabel) {
       return sanitizeSessionComponent(folderLabel);
     }
@@ -2692,6 +2749,75 @@
         .filter((file) => !/^manifest\.json$/i.test(getBaseName(file.name)));
       const stateFiles = jsonFiles.filter(isStateAnnotationFile);
       return stateFiles.length ? stateFiles : jsonFiles;
+    }
+
+    function detectRunCopyFolder(files) {
+      if (!files.length) {
+        throw new Error("请先选择 runs 下面的一个副本文件夹。");
+      }
+      const roots = new Set();
+      let keptImageCount = 0;
+      let keptStateCount = 0;
+      let keptCocoCount = 0;
+      files.forEach((file) => {
+        const relativePath = normalizeRelativePath(file.webkitRelativePath || file.name);
+        const parts = relativePath.split("/").filter(Boolean);
+        if (!parts.length) return;
+        roots.add(parts[0]);
+        const inner = parts.slice(1);
+        const fileName = getBaseName(relativePath);
+        if (inner[0] === "images" && isKeepStatusDir(inner[1]) && isImageFileName(fileName)) {
+          keptImageCount += 1;
+        }
+        if (inner[0] === "annotations" && isKeepStatusDir(inner[1]) && inner[2] === "state" && /\.json$/i.test(fileName)) {
+          keptStateCount += 1;
+        }
+        if (inner[0] === "annotations" && isKeepStatusDir(inner[1]) && inner[2] === "coco" && /\.json$/i.test(fileName)) {
+          keptCocoCount += 1;
+        }
+      });
+
+      if (roots.size !== 1) {
+        throw new Error("一次只能选择一个副本文件夹。");
+      }
+      const rootLabel = Array.from(roots)[0];
+      if (!keptImageCount) {
+        throw new Error("这个文件夹不是有效副本：缺少 images/keep 下的图片。");
+      }
+      if (!keptStateCount && !keptCocoCount) {
+        throw new Error("这个文件夹不是有效副本：缺少 annotations/keep/state 或 annotations/keep/coco 下的标注。");
+      }
+      return {
+        copyId: sanitizeRunCopyId(rootLabel),
+        rootLabel,
+        keptImageCount,
+        keptStateCount,
+        keptCocoCount,
+      };
+    }
+
+    function splitRunCopyFiles(files, selection) {
+      const images = [];
+      const states = [];
+      const cocos = [];
+      files.forEach((file) => {
+        const relativePath = normalizeRelativePath(file.webkitRelativePath || file.name);
+        const parts = relativePath.split("/").filter(Boolean);
+        if (parts[0] !== selection.rootLabel) return;
+        const inner = parts.slice(1);
+        const fileName = getBaseName(relativePath);
+        if (inner[0] === "images" && isKeepStatusDir(inner[1]) && isImageFileName(fileName)) {
+          images.push(file);
+        }
+        if (inner[0] === "annotations" && isKeepStatusDir(inner[1]) && inner[2] === "state" && /\.json$/i.test(fileName)) {
+          states.push(file);
+        }
+        if (inner[0] === "annotations" && isKeepStatusDir(inner[1]) && inner[2] === "coco" && /\.json$/i.test(fileName)) {
+          cocos.push(file);
+        }
+      });
+      const useStates = Boolean(states.length) && (!cocos.length || states.length >= cocos.length);
+      return { images, annotations: useStates ? states : cocos, states, cocos };
     }
 
     function buildImageFileIndex(files) {
@@ -2734,6 +2860,38 @@
         candidates.push(stripRootFolder(stateImageFileName));
         candidates.push(getBaseName(stateImageFileName));
       }
+      const stateSessions = annotationPayload && Array.isArray(annotationPayload.sessions)
+        ? annotationPayload.sessions
+        : [];
+      stateSessions.forEach((session) => {
+        const fileName = normalizeRelativePath(session && session.target && session.target.image_file_name);
+        if (!fileName) return;
+        candidates.push(fileName);
+        candidates.push(stripRootFolder(fileName));
+        candidates.push(getBaseName(fileName));
+      });
+      const stateTargets = annotationPayload && Array.isArray(annotationPayload.targets)
+        ? annotationPayload.targets
+        : [];
+      stateTargets.forEach((target) => {
+        const fileName = normalizeRelativePath(target && target.image_file_name);
+        if (!fileName) return;
+        candidates.push(fileName);
+        candidates.push(stripRootFolder(fileName));
+        candidates.push(getBaseName(fileName));
+      });
+      const stateCocoImages = annotationPayload
+        && annotationPayload.coco_payload
+        && Array.isArray(annotationPayload.coco_payload.images)
+        ? annotationPayload.coco_payload.images
+        : [];
+      stateCocoImages.forEach((image) => {
+        const fileName = normalizeRelativePath(image && image.file_name);
+        if (!fileName) return;
+        candidates.push(fileName);
+        candidates.push(stripRootFolder(fileName));
+        candidates.push(getBaseName(fileName));
+      });
       const cocoImages = annotationPayload && Array.isArray(annotationPayload.images)
         ? annotationPayload.images
         : [];
@@ -3036,6 +3194,197 @@
       }
     }
 
+    async function importRunCopyFolder() {
+      const runCopyFiles = Array.from((el.runCopyFolderUpload.files || []));
+      try {
+        const selection = detectRunCopyFolder(runCopyFiles);
+        const selectedAnnotationCount = selection.keptStateCount && (!selection.keptCocoCount || selection.keptStateCount >= selection.keptCocoCount)
+          ? selection.keptStateCount
+          : selection.keptCocoCount;
+        const totalFiles = Math.max(1, selectedAnnotationCount);
+        setBusy(`正在导入已有副本 ${selection.copyId}: 0 / ${totalFiles}`);
+        setImportProgress(0, totalFiles, `0 / ${totalFiles}`);
+        let payload;
+        let usedFallback = false;
+        try {
+          payload = await importRunCopyFolderViaServerChunks(selection);
+        } catch (error) {
+          if (!/Unknown route:\s*\/api\/import-run-copy\/chunk/i.test(String(error && error.message || error))) {
+            throw error;
+          }
+          usedFallback = true;
+          setBusy(`后端未加载分块接口，使用兼容方式导入 ${selection.copyId}...`);
+          setImportProgress(0, totalFiles, `0 / ${totalFiles}`);
+          payload = await importRunCopyFolderViaBatch(runCopyFiles, selection);
+        }
+        const importedTargets = payload.targets || [];
+        if (!importedTargets.length) {
+          throw new Error("这个副本里没有可导入的保留目标。");
+        }
+
+        state.currentImageSetId = payload.image_set_id || selection.copyId;
+        state.currentAnnotationStateId = payload.annotation_state_id || selection.copyId;
+        applyTargets(
+          importedTargets,
+          `副本: ${selection.copyId} | 图片 ${selection.keptImageCount} | state ${selection.keptStateCount} | coco ${selection.keptCocoCount}`
+        );
+
+        const parts = [`Imported ${importedTargets.length} targets from existing copy ${selection.copyId}${usedFallback ? " (compat mode)" : ""}.`];
+        const errors = payload.errors || [];
+        if (errors.length) {
+          parts.push(`Failed ${errors.length}.`);
+          parts.push(errors.slice(0, 4).map((item) => `${item.annotation_file_name || "annotation"}: ${item.error || "import failed"}`).join(" | "));
+        }
+        clearBusy(parts.join(" "));
+        await openCurrentTarget();
+      } catch (error) {
+        state.busy = false;
+        clearImportProgress();
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function importRunCopyFolderViaServerChunks(selection) {
+      const importedTargets = [];
+      const allErrors = [];
+      const copyId = selection.copyId;
+      let offset = 0;
+      const selectedAnnotationCount = selection.keptStateCount && (!selection.keptCocoCount || selection.keptStateCount >= selection.keptCocoCount)
+        ? selection.keptStateCount
+        : selection.keptCocoCount;
+      let total = Math.max(1, selectedAnnotationCount);
+      let finalPayload = null;
+      while (true) {
+        setBusy(`正在导入已有副本 ${copyId}: ${Math.min(offset, total)} / ${total}`);
+        setImportProgress(offset, total, `${offset} / ${total}`);
+        const payload = await apiPost(
+          "/api/import-run-copy/chunk",
+          { copy_id: copyId, offset, limit: RUN_COPY_IMPORT_CHUNK_SIZE },
+          { timeoutMs: 90000 }
+        );
+        finalPayload = payload;
+        importedTargets.push(...(payload.targets || []));
+        allErrors.push(...(payload.errors || []));
+        const progress = payload.progress || {};
+        total = Math.max(1, Number(progress.total || total));
+        offset = Math.min(total, Number(progress.processed || offset + RUN_COPY_IMPORT_CHUNK_SIZE));
+        setBusy(`正在导入已有副本 ${copyId}: ${offset} / ${total}`);
+        setImportProgress(offset, total, `${offset} / ${total}`);
+        if (!progress.has_more) break;
+        await new Promise((resolve) => window.setTimeout(resolve, 0));
+      }
+      return {
+        ...(finalPayload || {}),
+        ok: !allErrors.length,
+        import_id: copyId,
+        image_set_id: copyId,
+        annotation_state_id: copyId,
+        targets: importedTargets,
+        errors: allErrors,
+      };
+    }
+
+    async function importRunCopyFolderViaBatch(runCopyFiles, selection) {
+      const files = splitRunCopyFiles(runCopyFiles, selection);
+      if (!files.images.length) {
+        throw new Error("这个副本缺少 images/keep 下的图片。");
+      }
+      if (!files.annotations.length) {
+        throw new Error("这个副本缺少 annotations/keep/state 或 annotations/keep/coco 下的标注。");
+      }
+
+      const imageIndex = buildImageFileIndex(files.images);
+      const importedTargets = [];
+      const failed = [];
+      let pendingImports = [];
+      const imageDataUrlCache = new Map();
+      let uploadedImportCount = 0;
+      let batchIndex = 0;
+      const copyId = selection.copyId;
+      const flushPendingImports = async () => {
+        if (!pendingImports.length) return;
+        batchIndex += 1;
+        const chunk = pendingImports;
+        pendingImports = [];
+        const start = uploadedImportCount + 1;
+        const end = uploadedImportCount + chunk.length;
+        setBusy(`兼容导入 ${start}-${end} / ${files.annotations.length}...`);
+        setImportProgress(start - 1, files.annotations.length, `${start - 1} / ${files.annotations.length}`);
+        try {
+          const payload = await apiPost("/api/import-targets/batch", { items: chunk });
+          importedTargets.push(...(payload.targets || []));
+          for (const item of (payload.errors || [])) {
+            failed.push(`${item.annotation_file_name || "annotation"}: ${item.error || "import failed"}`);
+          }
+        } catch (error) {
+          failed.push(`Batch ${batchIndex}: ${error.message || error}`);
+        } finally {
+          uploadedImportCount = end;
+          setImportProgress(uploadedImportCount, files.annotations.length, `${uploadedImportCount} / ${files.annotations.length}`);
+          imageDataUrlCache.clear();
+        }
+      };
+
+      for (let index = 0; index < files.annotations.length; index += 1) {
+        const annotationFile = files.annotations[index];
+        const fileLabel = annotationFile.webkitRelativePath || annotationFile.name;
+        setBusy(`兼容导入 ${index + 1} / ${files.annotations.length}: ${fileLabel}`);
+        setImportProgress(index, files.annotations.length, `${index} / ${files.annotations.length}`);
+        try {
+          const annotationText = await readFileAsText(annotationFile);
+          let annotationPayload = JSON.parse(annotationText);
+          if (Array.isArray(annotationPayload)) {
+            if (annotationPayload.length !== 1 || typeof annotationPayload[0] !== "object") {
+              failed.push(`${annotationFile.name}: JSON 顶层不是单图对象`);
+              continue;
+            }
+            annotationPayload = annotationPayload[0];
+          }
+          const imageFile = resolveImageFileForAnnotation(annotationPayload, annotationFile, imageIndex);
+          if (!imageFile) {
+            failed.push(`${annotationFile.name}: 找不到对应图片`);
+            continue;
+          }
+          const imageCacheKey = imageFile.webkitRelativePath || imageFile.name;
+          let imageDataUrl = imageDataUrlCache.get(imageCacheKey);
+          if (!imageDataUrl) {
+            imageDataUrl = await readFileAsDataUrl(imageFile);
+            imageDataUrlCache.set(imageCacheKey, imageDataUrl);
+          }
+          pendingImports.push({
+            image_file_name: imageFile.name,
+            image_data_url: imageDataUrl,
+            annotation_file_name: annotationFile.name,
+            annotation_text: annotationText,
+            import_session_id: copyId,
+            import_session_label: `副本: ${copyId}`,
+            image_set_id: copyId,
+            image_set_label: copyId,
+            annotation_state_id: copyId,
+            annotation_state_label: copyId,
+            image_relative_path: imageFile.webkitRelativePath || imageFile.name,
+            annotation_relative_path: annotationFile.webkitRelativePath || annotationFile.name,
+          });
+          if (pendingImports.length >= IMPORT_BATCH_SIZE) {
+            await flushPendingImports();
+          }
+        } catch (error) {
+          failed.push(`${annotationFile.name}: ${error.message || error}`);
+        }
+      }
+
+      await flushPendingImports();
+      return {
+        ok: !failed.length,
+        import_id: copyId,
+        image_set_id: copyId,
+        annotation_state_id: copyId,
+        targets: importedTargets,
+        errors: failed.map((error) => ({ error })),
+      };
+    }
+
     async function openCurrentTarget() {
       if (!state.selectedTargetKey) return;
       const requestId = ++state.openRequestId;
@@ -3268,6 +3617,28 @@
         removeTargetsAndStayNearCurrent((item) => item.key === deletedKey);
         await openCurrentTarget();
         clearBusy("Current target deleted. Next target loaded.");
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    async function handleMarkWrongTarget() {
+      if (!state.session) return;
+      const target = state.session.target;
+      const ok = window.confirm(`标记当前框为错误框？\n${target.category_name} | ${target.annotation_id}`);
+      if (!ok) return;
+      try {
+        setBusy("Marking current target as wrong...");
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/mark-wrong-target`, {});
+        const wrongKey = payload.wrong_target_key || payload.deleted_target_key || target.key;
+        if (payload.bootstrap) {
+          state.bootstrap = payload.bootstrap;
+        }
+        removeTargetsAndStayNearCurrent((item) => item.key === wrongKey);
+        await openCurrentTarget();
+        clearBusy("Current target marked wrong. Next target loaded.");
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -3599,6 +3970,7 @@
 
     function bindEvents() {
       el.importBtn.addEventListener("click", importCurrentFoldersSafe);
+      el.importRunCopyBtn.addEventListener("click", importRunCopyFolder);
       el.exportWorkDatasetBtn.addEventListener("click", exportCurrentWorkDatasetCopy);
       el.searchInput.addEventListener("input", () => {
         void refreshTargetQueueAndOpenSelected();
@@ -3662,6 +4034,7 @@
       el.clearPointsBtn.addEventListener("click", handleClearPoints);
       el.clearLinesBtn.addEventListener("click", handleClearLines);
       el.deleteTargetBtn.addEventListener("click", handleDeleteTarget);
+      el.markWrongTargetBtn.addEventListener("click", handleMarkWrongTarget);
       el.deleteImageBtn.addEventListener("click", handleDeleteImage);
       el.markDifficultBtn.addEventListener("click", handleMarkDifficult);
       el.markBlurryImageBtn.addEventListener("click", handleMarkBlurryImage);

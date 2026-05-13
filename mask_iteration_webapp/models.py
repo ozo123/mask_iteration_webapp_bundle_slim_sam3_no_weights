@@ -13,8 +13,14 @@ def copy_points(points: list["PointRecord"]) -> list["PointRecord"]:
     return [PointRecord.from_dict(point.to_dict()) for point in points]
 
 
+def is_system_prompt_point(point: "PointRecord") -> bool:
+    source = str(point.source or "").strip().lower()
+    point_id = str(point.point_id or "").strip().lower()
+    return source == "system" or point_id.startswith("system_") or "system_center" in point_id
+
+
 def drop_system_prompt_points(points: list["PointRecord"]) -> list["PointRecord"]:
-    return [point for point in points if str(point.source or "").lower() != "system"]
+    return [point for point in points if not is_system_prompt_point(point)]
 
 
 def copy_line_strokes(strokes: list["LineStrokeRecord"]) -> list["LineStrokeRecord"]:
@@ -189,9 +195,9 @@ class HistoryRecord:
             mask_area=int(payload.get("mask_area", 0)),
             mask_bbox_xywh=payload.get("mask_bbox_xywh"),
             prompt_box_xyxy=[float(value) for value in payload["prompt_box_xyxy"]],
-            manual_points_snapshot=[
-                PointRecord.from_dict(item) for item in payload.get("manual_points_snapshot", [])
-            ],
+            manual_points_snapshot=drop_system_prompt_points(
+                [PointRecord.from_dict(item) for item in payload.get("manual_points_snapshot", [])]
+            ),
             line_strokes_snapshot=[
                 LineStrokeRecord.from_dict(item) for item in payload.get("line_strokes_snapshot", [])
             ],
@@ -227,6 +233,7 @@ class SessionState:
     notes: str = ""
     is_deleted: bool = False
     deleted_at: str | None = None
+    target_status: str = "keep"
 
     def current_history(self) -> HistoryRecord:
         for item in self.history:
@@ -259,10 +266,14 @@ class SessionState:
             "notes": self.notes,
             "is_deleted": self.is_deleted,
             "deleted_at": self.deleted_at,
+            "target_status": self.target_status,
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "SessionState":
+        target_status = str(payload.get("target_status") or "").strip().lower()
+        if target_status not in {"keep", "delete", "wrong"}:
+            target_status = "delete" if bool(payload.get("is_deleted", False)) else "keep"
         return cls(
             schema_version=int(payload.get("schema_version", 1)),
             session_id=str(payload["session_id"]),
@@ -273,7 +284,9 @@ class SessionState:
             system_prompt_points=drop_system_prompt_points(
                 [PointRecord.from_dict(item) for item in payload.get("system_prompt_points", [])]
             ),
-            working_points=[PointRecord.from_dict(item) for item in payload.get("working_points", [])],
+            working_points=drop_system_prompt_points(
+                [PointRecord.from_dict(item) for item in payload.get("working_points", [])]
+            ),
             line_strokes=[LineStrokeRecord.from_dict(item) for item in payload.get("line_strokes", [])],
             locked_regions=[LockedRegionRecord.from_dict(item) for item in payload.get("locked_regions", [])],
             text_prompt=str(payload.get("text_prompt", "") or ""),
@@ -283,4 +296,5 @@ class SessionState:
             notes=str(payload.get("notes", "")),
             is_deleted=bool(payload.get("is_deleted", False)),
             deleted_at=payload.get("deleted_at"),
+            target_status=target_status,
         )

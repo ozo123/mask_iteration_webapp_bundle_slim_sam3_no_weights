@@ -5,8 +5,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mask_iteration_webapp.models import SessionState, TargetRecord
-from mask_iteration_webapp.service import Sam3InferenceService
+from mask_iteration_webapp.models import HistoryRecord, PointRecord, SessionState, TargetRecord
+from mask_iteration_webapp.service import MaskIterationService, Sam3InferenceService, SessionStore, UploadedTargetStore
 
 
 class FakeModel:
@@ -31,6 +31,39 @@ class FakeTorch:
         @staticmethod
         def is_available():
             return False
+
+
+class RecordingIterationInference:
+    reference_box_expand_px = 0
+
+    def __init__(self):
+        self.iteration_points = None
+
+    def _load_runtime(self):
+        return {"np": np, "mask_utils": None}
+
+    def mask_from_rle(self, rle):
+        return np.asarray(rle["mask"], dtype=bool)
+
+    def _mask_to_rle(self, mask):
+        return {"mask": np.asarray(mask).astype(bool).tolist()}
+
+    def _mask_to_xywh(self, mask):
+        ys, xs = np.where(np.asarray(mask).astype(bool))
+        if len(xs) == 0:
+            return None
+        return [float(xs.min()), float(ys.min()), float(xs.max() - xs.min() + 1), float(ys.max() - ys.min() + 1)]
+
+    def iterate(self, target, prompt_box_xyxy, working_points, previous_logits):
+        self.iteration_points = [point.to_dict() for point in working_points]
+        mask = np.asarray([[True, False], [False, False]], dtype=bool)
+        return {
+            "mask_rle": self._mask_to_rle(mask),
+            "mask_area": 1,
+            "mask_bbox_xywh": [0.0, 0.0, 1.0, 1.0],
+            "score": 0.9,
+            "logits": np.asarray([[[32.0, -32.0], [-32.0, -32.0]]], dtype=np.float32),
+        }
 
 
 def _target(tmp_path):
@@ -118,7 +151,24 @@ def test_loading_legacy_session_drops_system_center_points(tmp_path):
                 "source": "system",
             }
         ],
-        "working_points": [],
+        "working_points": [
+            {
+                "point_id": "system_center_prompt",
+                "x": 4.0,
+                "y": 4.0,
+                "label": 1,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "source": "system",
+            },
+            {
+                "point_id": "manual_keep",
+                "x": 5.0,
+                "y": 5.0,
+                "label": 1,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "source": "manual",
+            },
+        ],
         "line_strokes": [],
         "locked_regions": [],
         "text_prompt": "",
@@ -134,6 +184,24 @@ def test_loading_legacy_session_drops_system_center_points(tmp_path):
                 "mask_area": 1,
                 "mask_bbox_xywh": [0, 0, 1, 1],
                 "prompt_box_xyxy": [2.0, 2.0, 6.0, 6.0],
+                "manual_points_snapshot": [
+                    {
+                        "point_id": "system_center_prompt",
+                        "x": 4.0,
+                        "y": 4.0,
+                        "label": 1,
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                        "source": "system",
+                    },
+                    {
+                        "point_id": "manual_keep",
+                        "x": 5.0,
+                        "y": 5.0,
+                        "label": 1,
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                        "source": "manual",
+                    },
+                ],
                 "system_prompt_points": [
                     {
                         "point_id": "system_center_prompt",
@@ -152,4 +220,68 @@ def test_loading_legacy_session_drops_system_center_points(tmp_path):
     session = SessionState.from_dict(payload)
 
     assert session.system_prompt_points == []
+    assert [point.point_id for point in session.working_points] == ["manual_keep"]
+    assert [point.point_id for point in session.history[0].manual_points_snapshot] == ["manual_keep"]
     assert session.history[0].system_prompt_points == []
+
+
+def test_iteration_strips_legacy_center_points_before_inference(tmp_path):
+    target = _target(tmp_path)
+    target_store = UploadedTargetStore(tmp_path / "runs")
+    session_store = SessionStore(tmp_path / "sessions")
+    inference = RecordingIterationInference()
+    service = MaskIterationService(target_store, session_store, inference)
+    session = SessionState(
+        schema_version=1,
+        session_id=target.key,
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+        target=target,
+        prompt_box_xyxy=[2.0, 2.0, 6.0, 6.0],
+        system_prompt_points=[],
+        working_points=[
+            PointRecord(
+                point_id="system_center_prompt",
+                x=4.0,
+                y=4.0,
+                label=1,
+                created_at="2026-01-01T00:00:00+00:00",
+                source="system",
+            ),
+            PointRecord(
+                point_id="manual_keep",
+                x=5.0,
+                y=5.0,
+                label=1,
+                created_at="2026-01-01T00:00:00+00:00",
+                source="manual",
+            ),
+        ],
+        line_strokes=[],
+        locked_regions=[],
+        text_prompt="",
+        history=[
+            HistoryRecord(
+                history_id="init",
+                parent_history_id=None,
+                name="init",
+                kind="initial",
+                created_at="2026-01-01T00:00:00+00:00",
+                score=0.75,
+                mask_rle={"mask": [[True, False], [False, False]]},
+                mask_area=1,
+                mask_bbox_xywh=[0.0, 0.0, 1.0, 1.0],
+                prompt_box_xyxy=[2.0, 2.0, 6.0, 6.0],
+            )
+        ],
+        current_history_id="init",
+    )
+    session_store.save_session(session)
+
+    service.iterate(target.key)
+
+    assert [point["point_id"] for point in inference.iteration_points] == ["manual_keep"]
+    updated = session_store.load_session(target.key)
+    assert updated is not None
+    assert [point.point_id for point in updated.working_points] == ["manual_keep"]
+    assert [point.point_id for point in updated.current_history().manual_points_snapshot] == ["manual_keep"]
