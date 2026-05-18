@@ -43,8 +43,19 @@ class DummyInference:
     def mask_from_rle(self, rle):
         height, width = rle["size"]
         mask = np.zeros((height, width), dtype=bool)
-        for y, x in rle.get("points", []):
-            mask[int(y), int(x)] = True
+        if "points" in rle:
+            for y, x in rle.get("points", []):
+                mask[int(y), int(x)] = True
+            return mask
+        flat = np.zeros(height * width, dtype=np.uint8)
+        cursor = 0
+        current = 0
+        for count in rle.get("counts", []):
+            count = int(count)
+            flat[cursor : cursor + count] = current
+            cursor += count
+            current = 1 - current
+        mask = flat.reshape((height, width), order="F").astype(bool)
         return mask
 
     def _mask_to_rle(self, mask):
@@ -135,6 +146,7 @@ def test_coco_segmentation_and_state_use_current_history(tmp_path):
     session = _session(_target(tmp_path), current_history_id="init")
 
     service._save_session_outputs(session)
+    payload = service.save_current_mask("target_a")
 
     coco = json.loads(Path(session.target.annotation_json_path).read_text(encoding="utf-8"))
     assert sorted(coco.keys()) == ["annotations", "categories", "images"]
@@ -146,6 +158,41 @@ def test_coco_segmentation_and_state_use_current_history(tmp_path):
     assert len(state_payload["sessions"]) == 1
     assert [item["history_id"] for item in state_payload["sessions"][0]["history"]] == ["init", "iter1"]
     assert state_payload["sessions"][0]["history"][1]["mask_rle"]["points"] == [[2, 2]]
+    assert payload["session"]["history"][0]["output_saved_at"]
+
+
+def test_open_session_uses_imported_coco_rle_segmentation(tmp_path):
+    target_store = UploadedTargetStore(tmp_path / "runs")
+    target = _target(tmp_path)
+    target_store._targets_by_key[target.key] = target
+    coco_path = Path(target.annotation_json_path)
+    coco = json.loads(coco_path.read_text(encoding="utf-8"))
+    coco["annotations"][0]["segmentation"] = {"size": [4, 4], "counts": [5, 1, 4, 1, 5]}
+    coco["annotations"][0]["area"] = 2
+    coco_path.write_text(json.dumps(coco), encoding="utf-8")
+    service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
+
+    payload = service.open_session(target.key)
+
+    history = payload["session"]["history"][0]
+    assert history["mask_area"] == 2
+    assert history["mask_rle"]["points"] == [[1, 1], [2, 2]]
+    assert history["score"] is None
+    assert history["mask_logits_relpath"] is None
+    assert history["mask_source"] == "coco"
+
+
+def test_unsaved_session_does_not_write_coco_or_state_outputs(tmp_path):
+    target_store = UploadedTargetStore(tmp_path / "runs")
+    service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
+    session = _session(_target(tmp_path), current_history_id="iter1")
+
+    service._save_session_outputs(session)
+
+    coco = json.loads(Path(session.target.annotation_json_path).read_text(encoding="utf-8"))
+    state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
+    assert coco["annotations"][0]["segmentation"] == []
+    assert not state_path.exists()
 
 
 def test_delete_history_allows_any_non_init_history(tmp_path):
@@ -180,6 +227,7 @@ def test_delete_target_writes_deleted_coco_and_state(tmp_path):
     service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
     session = _session(_target(tmp_path), current_history_id="iter1")
     service._save_session_outputs(session)
+    service.save_current_mask("target_a")
 
     service.delete_target("target_a")
 
@@ -206,6 +254,7 @@ def test_mark_wrong_target_keeps_deliverable_coco_and_marks_state(tmp_path):
     target_store._targets_by_key[target.key] = target
     session = _session(target, current_history_id="iter1")
     service._save_session_outputs(session)
+    service.save_current_mask("target_a")
 
     service.mark_wrong_target("target_a")
 
@@ -237,6 +286,7 @@ def test_mark_difficult_target_keeps_data_and_records_csv(tmp_path):
     target_store._targets_by_key[target.key] = target
     session = _session(target, current_history_id="iter1")
     service._save_session_outputs(session)
+    service.save_current_mask("target_a")
 
     service.mark_difficult_target("target_a", reason="hard edge")
 
@@ -282,6 +332,7 @@ def test_fresh_coco_import_does_not_restore_existing_session_by_identity(tmp_pat
     imported_target = payload["targets"][0]
     assert imported_target["has_session"] is False
     assert imported_target["history_count"] == 0
+    assert session_store.load_session("old_target_key") is None
 
 
 def test_open_session_restores_from_run_state_when_session_cache_is_missing(tmp_path):
@@ -291,9 +342,11 @@ def test_open_session_restores_from_run_state_when_session_cache_is_missing(tmp_
     service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions_a"), DummyInference())
     session = _session(target, current_history_id="iter1")
     service._save_session_outputs(session)
+    service.save_current_mask("target_a")
 
     restored_service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions_b"), DummyInference())
     payload = restored_service.open_session("target_a")
 
     assert payload["session"]["current_history_id"] == "iter1"
     assert [item["history_id"] for item in payload["session"]["history"]] == ["init", "iter1"]
+    assert all(item["mask_source"] == "state" for item in payload["session"]["history"])

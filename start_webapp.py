@@ -114,6 +114,7 @@ def main() -> None:
 
     target_store = UploadedTargetStore(args.imports_root.resolve())
     session_store = SessionStore(args.sessions_root.resolve())
+    session_store.clear_all()
     inference_service = Sam3InferenceService(
         project_root=PROJECT_ROOT,
         sam3_repo_dir=args.sam3_repo_dir.resolve(),

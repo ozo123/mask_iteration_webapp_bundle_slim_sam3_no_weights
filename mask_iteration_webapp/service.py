@@ -59,6 +59,11 @@ TARGET_STATUS_WRONG = "wrong"
 TARGET_STATUS_DIFFICULT = "difficult"
 TARGET_STATUSES = {TARGET_STATUS_KEEP, TARGET_STATUS_DELETE, TARGET_STATUS_WRONG, TARGET_STATUS_DIFFICULT}
 TARGET_QUALITY_STATUSES = {TARGET_STATUS_WRONG, TARGET_STATUS_DIFFICULT}
+MASK_SOURCE_COCO = "coco"
+MASK_SOURCE_STATE = "state"
+MASK_SOURCE_MODEL = "model"
+MASK_SOURCE_ITERATION = "iteration"
+MASK_SOURCES = {MASK_SOURCE_COCO, MASK_SOURCE_STATE, MASK_SOURCE_MODEL, MASK_SOURCE_ITERATION}
 
 
 def compact_path_component(text: str, max_length: int = 48) -> str:
@@ -78,6 +83,13 @@ class SessionStore:
 
     def target_index_path(self) -> Path:
         return self.sessions_root / "target_session_index.json"
+
+    def clear_all(self) -> None:
+        with self._lock:
+            root = self.sessions_root.resolve()
+            if root.exists():
+                shutil.rmtree(root)
+            root.mkdir(parents=True, exist_ok=True)
 
     def _load_target_index(self) -> dict[str, str]:
         path = self.target_index_path()
@@ -2435,6 +2447,18 @@ class MaskIterationService:
         self._lock = threading.RLock()
         self._validate_runtime: dict[str, Any] | None = None
         self._validate_lock = threading.RLock()
+        self._cleared_import_ids: set[str] = set()
+
+    def _reset_session_cache_for_import(self, import_id: str | None, force: bool = False) -> None:
+        normalized = sanitize_component(str(import_id or "").strip())
+        if not normalized:
+            normalized = "default"
+        with self._lock:
+            if not force and normalized in self._cleared_import_ids:
+                return
+            self.session_store.clear_all()
+            self._cleared_import_ids = {normalized}
+            self._clear_session_runtime_cache()
 
     def bootstrap_payload(self) -> dict[str, Any]:
         image_deletion_records = self.session_store.list_image_deletion_records()
@@ -3279,6 +3303,7 @@ class MaskIterationService:
                 session.deleted_at = None
                 session.updated_at = now
                 self._save_session_outputs(session)
+                self._save_outputs_if_current_mask_saved(session)
                 self._append_quality_target_record(
                     session,
                     TARGET_STATUS_DIFFICULT,
@@ -3981,6 +4006,7 @@ class MaskIterationService:
         mask: Any,
         logits: Any,
         score: float | None = None,
+        mask_source: str = MASK_SOURCE_ITERATION,
     ) -> HistoryRecord:
         runtime = self.inference_service._load_runtime()
         np = runtime["np"]
@@ -4003,6 +4029,7 @@ class MaskIterationService:
             text_prompt=session.text_prompt,
             used_mask_prompt=True,
             mask_logits_relpath=None,
+            mask_source=self._normalize_mask_source(mask_source),
         )
 
     def _fallback_logits_from_mask(self, mask: Any) -> Any:
@@ -4112,6 +4139,31 @@ class MaskIterationService:
             for index, (x, y) in enumerate(candidate_points[:5])
         ]
 
+    @staticmethod
+    def _normalize_mask_source(value: Any) -> str:
+        source = str(value or "").strip().lower()
+        return source if source in MASK_SOURCES else MASK_SOURCE_MODEL
+
+    @classmethod
+    def _mark_session_mask_source(cls, session_payload: dict[str, Any], source: str, saved_at: Any = None) -> None:
+        normalized = cls._normalize_mask_source(source)
+        saved_text = str(saved_at or "") or None
+        for item in session_payload.get("history", []) or []:
+            if not isinstance(item, dict):
+                continue
+            item["mask_source"] = normalized
+            if saved_text and not item.get("output_saved_at"):
+                item["output_saved_at"] = saved_text
+
+    @classmethod
+    def _mark_session_state_mask_source(cls, session: SessionState, source: str, saved_at: Any = None) -> None:
+        normalized = cls._normalize_mask_source(source)
+        saved_text = str(saved_at or "") or None
+        for item in session.history:
+            item.mask_source = normalized
+            if saved_text and not item.output_saved_at:
+                item.output_saved_at = saved_text
+
     def _prepare_import_response(self, manifest: dict[str, Any]) -> dict[str, Any]:
         target_items = [item for item in manifest.get("targets", []) if isinstance(item, dict)]
         allow_session_restore = bool(manifest.get("allow_session_restore", False))
@@ -4119,10 +4171,9 @@ class MaskIterationService:
         for session_payload in manifest.get("restored_sessions", []) or []:
             if not isinstance(session_payload, dict):
                 continue
+            self._mark_session_mask_source(session_payload, MASK_SOURCE_STATE, saved_at=manifest.get("imported_at"))
             restored_session = SessionState.from_dict(session_payload)
             self.session_store.save_session(restored_session)
-            self._save_coco_segmentation_output(restored_session)
-            self._save_state_output(restored_session)
             restored_session_keys.append(restored_session.session_id)
         for item in target_items:
             target = TargetRecord.from_dict(item)
@@ -4178,6 +4229,8 @@ class MaskIterationService:
         image_relative_path: str | None = None,
         annotation_relative_path: str | None = None,
     ) -> dict[str, Any]:
+        import_id = annotation_state_id or import_session_id or image_set_id
+        self._reset_session_cache_for_import(str(import_id or "single_import"))
         manifest = self.target_store.import_bundle(
             image_file_name=image_file_name,
             image_data_url=image_data_url,
@@ -4197,6 +4250,14 @@ class MaskIterationService:
     def import_targets_batch(self, items: Any) -> dict[str, Any]:
         if not isinstance(items, list) or not items:
             raise ValueError("Batch import requires a non-empty items list.")
+        first_item = items[0] if isinstance(items[0], dict) else {}
+        import_id = (
+            first_item.get("annotation_state_id")
+            or first_item.get("import_session_id")
+            or first_item.get("image_set_id")
+            or "batch_import"
+        )
+        self._reset_session_cache_for_import(str(import_id))
         batch = self.target_store.import_bundles(items)
         imports = [item for item in batch.get("imports", []) if isinstance(item, dict)]
         first_import = imports[0] if imports else {}
@@ -4222,6 +4283,7 @@ class MaskIterationService:
         return response
 
     def import_run_copy(self, copy_id: str | None) -> dict[str, Any]:
+        self._reset_session_cache_for_import(str(copy_id or "run_copy"))
         manifest = self.target_store.import_run_copy(copy_id)
         response = self._prepare_import_response(manifest)
         response["errors"] = manifest.get("errors") or []
@@ -4229,6 +4291,7 @@ class MaskIterationService:
         return response
 
     def import_run_copy_chunk(self, copy_id: str | None, offset: int = 0, limit: int = 16) -> dict[str, Any]:
+        self._reset_session_cache_for_import(str(copy_id or "run_copy"), force=int(offset or 0) == 0)
         manifest = self.target_store.import_run_copy_chunk(copy_id=copy_id, offset=offset, limit=limit)
         response = self._prepare_import_response(manifest)
         response["errors"] = manifest.get("errors") or []
@@ -4277,10 +4340,114 @@ class MaskIterationService:
                 session_payload["is_deleted"] = False
                 session_payload["deleted_at"] = None
             try:
+                self._mark_session_mask_source(session_payload, MASK_SOURCE_STATE, saved_at=payload.get("saved_at"))
                 return SessionState.from_dict(session_payload)
             except Exception:
                 continue
         return None
+
+    def _mask_from_coco_segmentation(self, segmentation: Any, height: int, width: int) -> Any | None:
+        if not segmentation:
+            return None
+        runtime = self.inference_service._load_runtime()
+        np = runtime["np"]
+        mask_utils = runtime.get("mask_utils")
+
+        if isinstance(segmentation, dict):
+            if "counts" not in segmentation:
+                return None
+            rle = dict(segmentation)
+            rle.setdefault("size", [int(height), int(width)])
+            try:
+                return np.asarray(self.inference_service.mask_from_rle(rle)).astype(bool)
+            except Exception:
+                return None
+
+        if not isinstance(segmentation, list) or not segmentation:
+            return None
+
+        if mask_utils is not None:
+            try:
+                rles = mask_utils.frPyObjects(segmentation, int(height), int(width))
+                decoded = mask_utils.decode(rles)
+                if decoded.ndim == 3:
+                    decoded = np.any(decoded, axis=2)
+                return np.asarray(decoded).astype(bool)
+            except Exception:
+                pass
+
+        mask_image = Image.new("L", (int(width), int(height)), 0)
+        draw = ImageDraw.Draw(mask_image)
+        drew_polygon = False
+        for polygon in segmentation:
+            if not isinstance(polygon, list) or len(polygon) < 6:
+                continue
+            coords = []
+            for index in range(0, len(polygon) - 1, 2):
+                try:
+                    coords.append((float(polygon[index]), float(polygon[index + 1])))
+                except (TypeError, ValueError):
+                    coords = []
+                    break
+            if len(coords) >= 3:
+                draw.polygon(coords, outline=1, fill=1)
+                drew_polygon = True
+        if not drew_polygon:
+            return None
+        return np.asarray(mask_image).astype(bool)
+
+    def _initial_mask_from_coco_annotation(self, target: TargetRecord) -> dict[str, Any] | None:
+        annotation_path = Path(target.annotation_json_path)
+        if not annotation_path.exists():
+            return None
+        try:
+            payload = json.loads(annotation_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(payload, dict) or not isinstance(payload.get("annotations"), list):
+            return None
+
+        annotation_id = str(target.source_annotation_id or target.annotation_id)
+        annotation = None
+        for item in payload.get("annotations", []):
+            if isinstance(item, dict) and str(item.get("id")) == annotation_id:
+                annotation = item
+                break
+        if not isinstance(annotation, dict):
+            return None
+
+        mask = self._mask_from_coco_segmentation(
+            annotation.get("segmentation"),
+            height=int(target.image_height),
+            width=int(target.image_width),
+        )
+        if mask is None:
+            return None
+        runtime = self.inference_service._load_runtime()
+        np = runtime["np"]
+        mask_bool = np.asarray(mask).astype(bool)
+        if mask_bool.shape != (int(target.image_height), int(target.image_width)):
+            return None
+        mask_area = int(mask_bool.sum())
+        if mask_area <= 0:
+            return None
+
+        prompt_box_xyxy = expand_box_xyxy(
+            target.bbox_xyxy,
+            self.inference_service.reference_box_expand_px,
+            target.image_width,
+            target.image_height,
+        )
+        return {
+            "prompt_box_xyxy": [float(value) for value in prompt_box_xyxy],
+            "system_prompt_points": [],
+            "mask_rle": self.inference_service._mask_to_rle(mask_bool),
+            "mask_area": mask_area,
+            "mask_bbox_xywh": self.inference_service._mask_to_xywh(mask_bool),
+            "score": None,
+            "logits": None,
+            "mask_source": MASK_SOURCE_COCO,
+        }
 
     def get_target_image_path(self, target_key: str) -> Path:
         return Path(self.target_store.get_target(target_key).image_path)
@@ -4304,7 +4471,8 @@ class MaskIterationService:
                 return self._session_payload(restored)
 
             created_at = utc_now_iso()
-            initial = self.inference_service.predict_initial(target)
+            initial = self._initial_mask_from_coco_annotation(target) or self.inference_service.predict_initial(target)
+            initial.setdefault("mask_source", MASK_SOURCE_MODEL)
             history_id = "init"
 
             session = SessionState(
@@ -4326,7 +4494,7 @@ class MaskIterationService:
                         name="init",
                         kind="initial",
                         created_at=created_at,
-                        score=float(initial["score"]),
+                        score=float(initial["score"]) if initial["score"] is not None else None,
                         mask_rle=initial["mask_rle"],
                         mask_area=int(initial["mask_area"]),
                         mask_bbox_xywh=initial["mask_bbox_xywh"],
@@ -4338,12 +4506,14 @@ class MaskIterationService:
                         text_prompt="",
                         used_mask_prompt=False,
                         mask_logits_relpath=None,
+                        mask_source=self._normalize_mask_source(initial.get("mask_source")),
                     )
                 ],
                 current_history_id=history_id,
             )
-            logits_relpath = self.session_store.save_logits(session, history_id, initial["logits"])
-            session.history[0].mask_logits_relpath = logits_relpath
+            if initial.get("logits") is not None:
+                logits_relpath = self.session_store.save_logits(session, history_id, initial["logits"])
+                session.history[0].mask_logits_relpath = logits_relpath
             self._save_session_outputs(session)
             return self._session_payload(session)
 
@@ -4490,6 +4660,7 @@ class MaskIterationService:
             session.deleted_at = deleted_at
             session.updated_at = deleted_at
             self._save_session_outputs(session)
+            self._save_outputs_if_current_mask_saved(session)
             target = session.target
             self.session_store.add_target_deletion_record(
                 {
@@ -4532,6 +4703,7 @@ class MaskIterationService:
             session.deleted_at = None
             session.updated_at = marked_at
             self._save_session_outputs(session)
+            self._save_outputs_if_current_mask_saved(session)
             self._append_quality_target_record(session, TARGET_STATUS_WRONG, marked_at, reason="wrong_target")
             target = session.target
             return {
@@ -4564,6 +4736,7 @@ class MaskIterationService:
                 session.deleted_at = deleted_at
                 session.updated_at = deleted_at
                 self._save_session_outputs(session)
+                self._save_outputs_if_current_mask_saved(session)
 
             record = {
                 "schema_version": 1,
@@ -4727,14 +4900,40 @@ class MaskIterationService:
             raise FileNotFoundError(f"Session not found for target {target_key}")
         return session
 
-    def _save_session_outputs(self, session: SessionState) -> None:
-        self.session_store.save_session(session)
+    def save_current_mask(self, target_key: str) -> dict[str, Any]:
+        with self._lock:
+            session = self._require_session(target_key)
+            saved_at = utc_now_iso()
+            current = session.current_history()
+            current.output_saved_at = saved_at
+            session.updated_at = saved_at
+            coco_path = self._save_coco_segmentation_output(session)
+            state_path = self._save_state_output(session)
+            self.session_store.save_session(session)
+            self._clear_session_runtime_cache()
+            return {
+                **self._session_payload(session),
+                "saved_current_mask": {
+                    "saved_at": saved_at,
+                    "coco_path": str(coco_path.resolve()) if coco_path else None,
+                    "state_path": str(state_path.resolve()) if state_path else None,
+                },
+            }
+
+    def _save_outputs_if_current_mask_saved(self, session: SessionState) -> None:
+        current = session.current_history()
+        if not current.output_saved_at:
+            return
         self._save_coco_segmentation_output(session)
         self._save_state_output(session)
+
+    def _save_session_outputs(self, session: SessionState) -> None:
+        self.session_store.save_session(session)
         self._clear_session_runtime_cache()
 
     def _session_payload(self, session: SessionState) -> dict[str, Any]:
         current = session.current_history()
+        current_source = self._normalize_mask_source(current.mask_source)
         return {
             "session": {
                 "schema_version": session.schema_version,
@@ -4752,6 +4951,9 @@ class MaskIterationService:
                 "text_prompt": session.text_prompt,
                 "current_history_id": session.current_history_id,
                 "current_history_name": current.name,
+                "current_mask_source": current_source,
+                "current_mask_saved_at": current.output_saved_at,
+                "current_mask_saved": bool(current.output_saved_at),
                 "history": [item.to_dict() for item in session.history],
                 "is_deleted": session.is_deleted,
                 "deleted_at": session.deleted_at,

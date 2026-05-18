@@ -173,6 +173,8 @@ class HistoryRecord:
     used_mask_prompt: bool = False
     mask_logits_relpath: str | None = None
     mask_rle_relpath: str | None = None
+    mask_source: str = "model"
+    output_saved_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -211,6 +213,8 @@ class HistoryRecord:
             used_mask_prompt=bool(payload.get("used_mask_prompt", False)),
             mask_logits_relpath=payload.get("mask_logits_relpath"),
             mask_rle_relpath=payload.get("mask_rle_relpath"),
+            mask_source=str(payload.get("mask_source") or "model"),
+            output_saved_at=payload.get("output_saved_at"),
         )
 
 

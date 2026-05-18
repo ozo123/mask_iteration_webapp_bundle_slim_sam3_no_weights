@@ -203,6 +203,7 @@
     #importRunCopyBtn,
     #exportWorkDatasetBtn,
     #iterateBtn,
+    #saveCurrentMaskBtn,
     #validateRunBtn {
       border-color: var(--blue);
       background: var(--blue);
@@ -420,6 +421,12 @@
       color: var(--muted);
       font-size: 11px;
       line-height: 1.35;
+    }
+    .mask-status-line {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+      margin-top: 4px;
     }
     .meta-card,
     .point-card,
@@ -875,7 +882,10 @@
           <div class="section-title">主要操作</div>
           <div class="toolbar-primary">
             <button id="iterateBtn" type="button">迭代一次</button>
+            <button id="saveCurrentMaskBtn" type="button">保存当前mask</button>
           </div>
+          <div id="maskSourceSummary" class="mask-status-line">当前 Mask 来源：等待打开目标</div>
+          <div id="maskSaveSummary" class="mask-status-line">保存状态：未保存到 COCO/state</div>
         </div>
 
         <div class="toolbar-group">
@@ -1064,6 +1074,9 @@
       cancelRegionBtn: document.getElementById("cancelRegionBtn"),
       textPromptInput: document.getElementById("textPromptInput"),
       iterateBtn: document.getElementById("iterateBtn"),
+      saveCurrentMaskBtn: document.getElementById("saveCurrentMaskBtn"),
+      maskSourceSummary: document.getElementById("maskSourceSummary"),
+      maskSaveSummary: document.getElementById("maskSaveSummary"),
       undoBtn: document.getElementById("undoBtn"),
       clearPointsBtn: document.getElementById("clearPointsBtn"),
       clearLinesBtn: document.getElementById("clearLinesBtn"),
@@ -1483,6 +1496,7 @@
       el.prevTargetBtn.disabled = !hasTargets || state.busy;
       el.nextTargetBtn.disabled = !hasTargets || state.busy;
       el.iterateBtn.disabled = !hasSession || state.busy;
+      el.saveCurrentMaskBtn.disabled = !hasSession || state.busy;
       el.undoBtn.disabled = !hasWorkingPoints || state.busy;
       el.clearPointsBtn.disabled = !hasWorkingPoints || state.busy;
       el.clearLinesBtn.disabled = !hasLineStrokes || state.busy;
@@ -1568,6 +1582,41 @@
         : "等待分别选择图片文件夹和标注文件夹。";
     }
 
+    function normalizeMaskSource(source) {
+      const value = String(source || "").toLowerCase();
+      if (value === "state" || value === "coco" || value === "model" || value === "iteration") {
+        return value;
+      }
+      return "model";
+    }
+
+    function maskSourceLabel(source) {
+      const normalized = normalizeMaskSource(source);
+      if (normalized === "state") return "State 编码恢复";
+      if (normalized === "coco") return "COCO 编码解码";
+      if (normalized === "iteration") return "模型迭代生成";
+      return "模型生成";
+    }
+
+    function isEncodedMaskSource(source) {
+      const normalized = normalizeMaskSource(source);
+      return normalized === "state" || normalized === "coco";
+    }
+
+    function renderMaskSourceStatus() {
+      if (!el.maskSourceSummary || !el.maskSaveSummary) return;
+      const current = getCurrentHistory();
+      if (!state.session || !current) {
+        el.maskSourceSummary.textContent = "当前 Mask 来源：等待打开目标";
+        el.maskSaveSummary.textContent = "保存状态：未保存到 COCO/state";
+        return;
+      }
+      el.maskSourceSummary.textContent = `当前 Mask 来源：${maskSourceLabel(current.mask_source || state.session.current_mask_source)}`;
+      el.maskSaveSummary.textContent = current.output_saved_at
+        ? `保存状态：已保存到 COCO/state (${current.output_saved_at})`
+        : "保存状态：未保存到 COCO/state";
+    }
+
     function renderWorkflowStatus() {
       const queueCount = state.filteredTargets.length;
       const currentIndex = state.filteredTargets.findIndex((item) => item.key === state.selectedTargetKey);
@@ -1577,10 +1626,12 @@
 
       if (!state.session) {
         el.savedAnnotationSummary.textContent = "等待打开目标";
+        renderMaskSourceStatus();
         return;
       }
       const target = state.session.target || {};
       el.savedAnnotationSummary.textContent = `annotation id ${target.annotation_id || "-"} · ${target.image_file_name || "-"}`;
+      renderMaskSourceStatus();
     }
 
     function describeValidateReviewMode(mode) {
@@ -2529,7 +2580,7 @@
       if (current) {
         const decoded = decodeSimpleRLE(current.mask_rle, current.history_id);
         const restoredHistoryId = state.session ? state.restoredMaskHistoryByTarget.get(state.session.session_id) : null;
-        const maskColor = restoredHistoryId && current.history_id === restoredHistoryId
+        const maskColor = isEncodedMaskSource(current.mask_source || state.session.current_mask_source) || (restoredHistoryId && current.history_id === restoredHistoryId)
           ? COLORS.restoredMask
           : COLORS.currentMask;
         ctx.drawImage(
@@ -3497,6 +3548,21 @@
       }
     }
 
+    async function handleSaveCurrentMask() {
+      if (!state.session) return;
+      try {
+        setBusy("Saving current mask to COCO/state...");
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/save-current-mask`, {});
+        applySessionPayload(payload);
+        const saved = payload.saved_current_mask || {};
+        clearBusy(`Current mask saved to COCO/state${saved.saved_at ? ` at ${saved.saved_at}` : ""}.`);
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+      }
+    }
+
     async function handleUndo() {
       if (!state.session) return;
       try {
@@ -4001,6 +4067,7 @@
         }
       });
       el.iterateBtn.addEventListener("click", handleIterate);
+      el.saveCurrentMaskBtn.addEventListener("click", handleSaveCurrentMask);
       el.undoBtn.addEventListener("click", handleUndo);
       el.clearPointsBtn.addEventListener("click", handleClearPoints);
       el.clearLinesBtn.addEventListener("click", handleClearLines);
