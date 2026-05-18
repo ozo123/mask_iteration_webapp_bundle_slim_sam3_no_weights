@@ -553,6 +553,35 @@ class UploadedTargetStore:
             raise FileNotFoundError(f"Run copy not found: {normalized_copy_id}")
         return normalized_copy_id, copy_root
 
+    def reset_run_copy(self, copy_id: str | None) -> str:
+        raw_copy_id = str(copy_id or "").strip()
+        if not raw_copy_id:
+            raise ValueError("Run copy id is required.")
+        normalized_copy_id = sanitize_component(raw_copy_id)
+        copy_root = self.run_copy_root(normalized_copy_id).resolve()
+        runs_root = self.runs_root.resolve()
+        try:
+            copy_root.relative_to(runs_root)
+        except ValueError as error:
+            raise ValueError("Run copy path must stay inside the runs directory.") from error
+        if copy_root == runs_root:
+            raise ValueError("Refusing to reset the runs root.")
+
+        with self._lock:
+            previous_payload = self._imports_by_id.pop(normalized_copy_id, {})
+            for target in previous_payload.get("targets", []) or []:
+                if isinstance(target, TargetRecord):
+                    self._targets_by_key.pop(target.key, None)
+                elif isinstance(target, dict):
+                    self._targets_by_key.pop(str(target.get("key") or ""), None)
+            for target_key, target in list(self._targets_by_key.items()):
+                if target.import_id == normalized_copy_id:
+                    self._targets_by_key.pop(target_key, None)
+            self._manifest_paths_by_id.pop(normalized_copy_id, None)
+            if copy_root.exists():
+                shutil.rmtree(copy_root)
+        return normalized_copy_id
+
     @staticmethod
     def _relative_path_text(path: Path, root: Path) -> str:
         try:
@@ -4209,7 +4238,7 @@ class MaskIterationService:
                 continue
             self._mark_session_mask_source(session_payload, MASK_SOURCE_STATE, saved_at=manifest.get("imported_at"))
             restored_session = SessionState.from_dict(session_payload)
-            self.session_store.save_session(restored_session)
+            self._save_session_outputs(restored_session)
             restored_session_keys.append(restored_session.session_id)
         for item in target_items:
             target = TargetRecord.from_dict(item)
@@ -4220,7 +4249,7 @@ class MaskIterationService:
             if existing is not None:
                 if existing.target.to_dict() != target.to_dict():
                     existing.target = target
-                    self.session_store.save_session(existing)
+                    self._save_session_outputs(existing)
                 restored_session_keys.append(target.key)
                 continue
             migrated = self.session_store.find_session_by_target_identity(target)
@@ -4228,7 +4257,7 @@ class MaskIterationService:
                 continue
             migrated.session_id = target.key
             migrated.target = target
-            self.session_store.save_session(migrated)
+            self._save_session_outputs(migrated)
             restored_session_keys.append(target.key)
         session_meta = self.session_store.list_session_meta()
         targets = [
@@ -4283,7 +4312,7 @@ class MaskIterationService:
         )
         return self._prepare_import_response(manifest)
 
-    def import_targets_batch(self, items: Any) -> dict[str, Any]:
+    def import_targets_batch(self, items: Any, reset_import_id: str | None = None) -> dict[str, Any]:
         if not isinstance(items, list) or not items:
             raise ValueError("Batch import requires a non-empty items list.")
         first_item = items[0] if isinstance(items[0], dict) else {}
@@ -4293,6 +4322,9 @@ class MaskIterationService:
             or first_item.get("image_set_id")
             or "batch_import"
         )
+        if reset_import_id:
+            import_id = self.target_store.reset_run_copy(reset_import_id)
+            self._cleared_import_ids.discard(sanitize_component(str(import_id)))
         self._reset_session_cache_for_import(str(import_id))
         batch = self.target_store.import_bundles(items)
         imports = [item for item in batch.get("imports", []) if isinstance(item, dict)]
@@ -4944,9 +4976,7 @@ class MaskIterationService:
             current.output_saved_at = saved_at
             session.updated_at = saved_at
             coco_path = self._save_coco_segmentation_output(session)
-            state_path = self._save_state_output(session)
-            self.session_store.save_session(session)
-            self._clear_session_runtime_cache()
+            state_path = self._save_session_outputs(session)
             return {
                 **self._session_payload(session),
                 "saved_current_mask": {
@@ -4961,11 +4991,12 @@ class MaskIterationService:
         if not current.output_saved_at:
             return
         self._save_coco_segmentation_output(session)
-        self._save_state_output(session)
 
-    def _save_session_outputs(self, session: SessionState) -> None:
+    def _save_session_outputs(self, session: SessionState) -> Path:
         self.session_store.save_session(session)
+        state_path = self._save_state_output(session)
         self._clear_session_runtime_cache()
+        return state_path
 
     def _session_payload(self, session: SessionState) -> dict[str, Any]:
         current = session.current_history()

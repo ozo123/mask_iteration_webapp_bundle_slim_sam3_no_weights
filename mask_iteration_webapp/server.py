@@ -78,7 +78,10 @@ def create_handler(service, static_dir: Path):
                 if path == "/api/import-targets/batch":
                     return self._send_json(
                         HTTPStatus.OK,
-                        service.import_targets_batch(payload.get("items")),
+                        service.import_targets_batch(
+                            payload.get("items"),
+                            reset_import_id=payload.get("reset_import_id"),
+                        ),
                     )
 
                 if path == "/api/import-run-copy":

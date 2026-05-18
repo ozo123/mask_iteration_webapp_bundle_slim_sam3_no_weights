@@ -15,6 +15,8 @@ from mask_iteration_webapp.service import (
     RUN_KEEP_DIR,
     RUN_LEGACY_KEEP_DIR,
     RUN_STATE_DIR,
+    MaskIterationService,
+    SessionStore,
     UploadedTargetStore,
 )
 
@@ -105,6 +107,37 @@ def test_reimporting_clean_coco_overwrites_existing_working_copy(tmp_path):
     assert len(reimported["targets"]) == 1
     assert json.loads(annotation_path.read_text())["annotations"][0]["id"] == 101
     assert json.loads(state_path.read_text(encoding="utf-8"))["sessions"] == []
+
+
+def test_batch_run_copy_import_reset_overwrites_existing_copy(tmp_path):
+    store = UploadedTargetStore(tmp_path / "runs")
+    service = MaskIterationService(store, SessionStore(tmp_path / "sessions"), object())
+
+    def item(annotation_id: int, image_name: str = "a.png"):
+        return {
+            "image_file_name": image_name,
+            "image_data_url": _png_data_url("white"),
+            "annotation_file_name": "ann.json",
+            "annotation_text": json.dumps(_coco(annotation_id, image_name=image_name)),
+            "import_session_id": "external_copy",
+            "image_set_id": "external_copy",
+            "annotation_state_id": "external_copy",
+            "image_relative_path": f"external_copy/images/{RUN_KEEP_DIR}/{image_name}",
+            "annotation_relative_path": f"external_copy/annotations/{RUN_KEEP_DIR}/{RUN_COCO_DIR}/ann.json",
+        }
+
+    first = service.import_targets_batch([item(101)], reset_import_id="external_copy")
+    stale_path = tmp_path / "runs" / "external_copy" / "annotations" / RUN_KEEP_DIR / RUN_COCO_DIR / "stale.json"
+    stale_path.write_text(json.dumps(_coco(999)), encoding="utf-8")
+
+    second = service.import_targets_batch([item(202, image_name="b.png")], reset_import_id="external_copy")
+
+    assert first["targets"][0]["annotation_id"] == "101"
+    assert second["targets"][0]["annotation_id"] == "202"
+    assert not stale_path.exists()
+    manifest = json.loads((tmp_path / "runs" / "external_copy" / "manifest.json").read_text(encoding="utf-8"))
+    assert [item["annotation_id"] for item in manifest["targets"]] == ["202"]
+    assert sorted(path.name for path in (tmp_path / "runs" / "external_copy" / "images" / RUN_KEEP_DIR).iterdir()) == ["b.png"]
 
 
 def test_original_direct_import_still_works_without_explicit_state(tmp_path):

@@ -884,10 +884,10 @@
           <div class="section-title">主要操作</div>
           <div class="toolbar-primary">
             <button id="iterateBtn" type="button">迭代一次</button>
-            <button id="saveCurrentMaskBtn" type="button">保存当前mask</button>
+            <button id="saveCurrentMaskBtn" type="button">保存 COCO</button>
           </div>
           <div id="maskSourceSummary" class="mask-status-line">当前 Mask 来源：等待打开目标</div>
-          <div id="maskSaveSummary" class="mask-status-line">保存状态：未保存到 COCO/state</div>
+          <div id="maskSaveSummary" class="mask-status-line">State 自动保存，COCO 未手动保存</div>
         </div>
 
         <div class="toolbar-group">
@@ -1616,13 +1616,13 @@
       const current = getCurrentHistory();
       if (!state.session || !current) {
         el.maskSourceSummary.textContent = "当前 Mask 来源：等待打开目标";
-        el.maskSaveSummary.textContent = "保存状态：未保存到 COCO/state";
+        el.maskSaveSummary.textContent = "State 自动保存，COCO 未手动保存";
         return;
       }
       el.maskSourceSummary.textContent = `当前 Mask 来源：${maskSourceLabel(current.mask_source || state.session.current_mask_source)}`;
       el.maskSaveSummary.textContent = current.output_saved_at
-        ? `保存状态：已保存到 COCO/state (${current.output_saved_at})`
-        : "保存状态：未保存到 COCO/state";
+        ? `State 自动保存，COCO 已手动保存 (${current.output_saved_at})`
+        : "State 自动保存，COCO 未手动保存";
     }
 
     function renderWorkflowStatus() {
@@ -2833,7 +2833,7 @@
 
     function detectRunCopyFolder(files) {
       if (!files.length) {
-        throw new Error("请先选择 runs 下面的一个副本文件夹。");
+        throw new Error("请先选择一个符合副本结构的文件夹。");
       }
       const roots = new Set();
       let keptImageCount = 0;
@@ -3361,7 +3361,7 @@
         const totalFiles = Math.max(1, selectedAnnotationCount);
         setBusy(`正在导入已有副本 ${selection.copyId}: 0 / ${totalFiles}`);
         setImportProgress(0, totalFiles, `0 / ${totalFiles}`);
-        const payload = await importRunCopyFolderViaServerChunks(selection);
+        const payload = await importRunCopyFolderViaBatch(runCopyFiles, selection);
         const importedTargets = payload.targets || [];
         if (!importedTargets.length) {
           throw new Error("这个副本里没有可导入的保留目标。");
@@ -3446,10 +3446,12 @@
       const imageIndex = buildImageFileIndex(files.images);
       const importedTargets = [];
       const failed = [];
+      const restoredSessionKeys = new Set();
       let pendingImports = [];
       const imageDataUrlCache = new Map();
       let uploadedImportCount = 0;
       let batchIndex = 0;
+      let didResetRunCopy = false;
       const copyId = selection.copyId;
       const flushPendingImports = async () => {
         if (!pendingImports.length) return;
@@ -3458,11 +3460,21 @@
         pendingImports = [];
         const start = uploadedImportCount + 1;
         const end = uploadedImportCount + chunk.length;
-        setBusy(`兼容导入 ${start}-${end} / ${files.annotations.length}...`);
+        setBusy(`正在导入副本 ${start}-${end} / ${files.annotations.length}...`);
         setImportProgress(start - 1, files.annotations.length, `${start - 1} / ${files.annotations.length}`);
         try {
-          const payload = await apiPost("/api/import-targets/batch", { items: chunk });
+          const requestPayload = { items: chunk };
+          if (!didResetRunCopy) {
+            requestPayload.reset_import_id = copyId;
+          }
+          const payload = await apiPost("/api/import-targets/batch", requestPayload, { timeoutMs: 90000 });
+          if (requestPayload.reset_import_id) {
+            didResetRunCopy = true;
+          }
           importedTargets.push(...(payload.targets || []));
+          for (const key of payload.restored_session_keys || []) {
+            restoredSessionKeys.add(String(key));
+          }
           for (const item of (payload.errors || [])) {
             failed.push(`${item.annotation_file_name || "annotation"}: ${item.error || "import failed"}`);
           }
@@ -3478,7 +3490,7 @@
       for (let index = 0; index < files.annotations.length; index += 1) {
         const annotationFile = files.annotations[index];
         const fileLabel = annotationFile.webkitRelativePath || annotationFile.name;
-        setBusy(`兼容导入 ${index + 1} / ${files.annotations.length}: ${fileLabel}`);
+        setBusy(`正在导入副本 ${index + 1} / ${files.annotations.length}: ${fileLabel}`);
         setImportProgress(index, files.annotations.length, `${index} / ${files.annotations.length}`);
         try {
           const annotationText = await readFileAsText(annotationFile);
@@ -3531,6 +3543,7 @@
         annotation_state_id: copyId,
         targets: importedTargets,
         errors: failed.map((error) => ({ error })),
+        restored_session_keys: Array.from(restoredSessionKeys),
       };
     }
 
@@ -3634,11 +3647,11 @@
     async function handleSaveCurrentMask() {
       if (!state.session) return;
       try {
-        setBusy("Saving current mask to COCO/state...");
+        setBusy("Saving current mask to COCO...");
         const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/save-current-mask`, {});
         applySessionPayload(payload);
         const saved = payload.saved_current_mask || {};
-        clearBusy(`Current mask saved to COCO/state${saved.saved_at ? ` at ${saved.saved_at}` : ""}.`);
+        clearBusy(`Current mask saved to COCO${saved.saved_at ? ` at ${saved.saved_at}` : ""}. State is auto-saved.`);
       } catch (error) {
         state.busy = false;
         renderButtons();

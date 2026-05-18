@@ -182,7 +182,7 @@ def test_open_session_uses_imported_coco_rle_segmentation(tmp_path):
     assert history["mask_source"] == "coco"
 
 
-def test_unsaved_session_does_not_write_coco_or_state_outputs(tmp_path):
+def test_unsaved_session_does_not_write_coco_but_autosaves_state(tmp_path):
     target_store = UploadedTargetStore(tmp_path / "runs")
     service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
     session = _session(_target(tmp_path), current_history_id="iter1")
@@ -192,7 +192,9 @@ def test_unsaved_session_does_not_write_coco_or_state_outputs(tmp_path):
     coco = json.loads(Path(session.target.annotation_json_path).read_text(encoding="utf-8"))
     state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
     assert coco["annotations"][0]["segmentation"] == []
-    assert not state_path.exists()
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state_payload["sessions"][0]["current_history_id"] == "iter1"
+    assert state_payload["sessions"][0]["history"][1]["mask_rle"]["points"] == [[2, 2]]
 
 
 def test_delete_history_allows_any_non_init_history(tmp_path):
@@ -279,7 +281,7 @@ def test_mark_wrong_target_keeps_deliverable_coco_and_marks_state(tmp_path):
     assert "wrong" in quality_csv.read_text(encoding="utf-8")
 
 
-def test_mark_wrong_unsaved_target_records_quality_without_state_output(tmp_path):
+def test_mark_wrong_unsaved_target_records_quality_and_autosaves_state(tmp_path):
     target_store = UploadedTargetStore(tmp_path / "runs")
     service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
     target = _target(tmp_path)
@@ -292,7 +294,9 @@ def test_mark_wrong_unsaved_target_records_quality_without_state_output(tmp_path
     coco = json.loads(Path(session.target.annotation_json_path).read_text(encoding="utf-8"))
     assert coco["annotations"][0]["segmentation"] == []
     keep_state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
-    assert not keep_state_path.exists()
+    keep_state = json.loads(keep_state_path.read_text(encoding="utf-8"))
+    assert keep_state["target_status"] == "wrong"
+    assert keep_state["sessions"][0]["target_status"] == "wrong"
     quality_csv = tmp_path / "runs" / "copy_a" / "quality_marked_targets.csv"
     assert "wrong" in quality_csv.read_text(encoding="utf-8")
 
@@ -321,7 +325,7 @@ def test_mark_difficult_target_keeps_data_and_records_csv(tmp_path):
     assert "hard edge" in quality_text
 
 
-def test_mark_difficult_unsaved_target_records_quality_without_state_output(tmp_path):
+def test_mark_difficult_unsaved_target_records_quality_and_autosaves_state(tmp_path):
     target_store = UploadedTargetStore(tmp_path / "runs")
     service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
     target = _target(tmp_path)
@@ -334,7 +338,9 @@ def test_mark_difficult_unsaved_target_records_quality_without_state_output(tmp_
     coco = json.loads(Path(session.target.annotation_json_path).read_text(encoding="utf-8"))
     assert coco["annotations"][0]["segmentation"] == []
     keep_state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
-    assert not keep_state_path.exists()
+    keep_state = json.loads(keep_state_path.read_text(encoding="utf-8"))
+    assert keep_state["target_status"] == "difficult"
+    assert keep_state["sessions"][0]["target_status"] == "difficult"
     quality_csv = tmp_path / "runs" / "copy_a" / "quality_marked_targets.csv"
     quality_text = quality_csv.read_text(encoding="utf-8")
     assert "difficult" in quality_text

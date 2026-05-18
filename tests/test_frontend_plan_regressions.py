@@ -23,14 +23,14 @@ def test_special_toolbar_only_exposes_required_quality_actions():
     assert "删除整张图" not in html
 
 
-def test_run_copy_import_does_not_fall_back_to_batch_upload():
+def test_run_copy_import_uploads_selected_folder_instead_of_reading_runs_copy():
     html = _html()
 
     import_start = html.index("async function importRunCopyFolder()")
     import_end = html.index("async function importRunCopyFolderViaServerChunks", import_start)
     import_body = html[import_start:import_end]
 
-    assert "importRunCopyFolderViaServerChunks(selection)" in import_body
-    assert "importRunCopyFolderViaBatch" not in import_body
+    assert "importRunCopyFolderViaBatch(runCopyFiles, selection)" in import_body
+    assert "importRunCopyFolderViaServerChunks(selection)" not in import_body
     assert "compat mode" not in import_body
     assert "fallback" not in import_body.lower()
