@@ -279,6 +279,24 @@ def test_mark_wrong_target_keeps_deliverable_coco_and_marks_state(tmp_path):
     assert "wrong" in quality_csv.read_text(encoding="utf-8")
 
 
+def test_mark_wrong_unsaved_target_records_quality_without_state_output(tmp_path):
+    target_store = UploadedTargetStore(tmp_path / "runs")
+    service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
+    target = _target(tmp_path)
+    target_store._targets_by_key[target.key] = target
+    session = _session(target, current_history_id="iter1")
+    service._save_session_outputs(session)
+
+    service.mark_wrong_target("target_a")
+
+    coco = json.loads(Path(session.target.annotation_json_path).read_text(encoding="utf-8"))
+    assert coco["annotations"][0]["segmentation"] == []
+    keep_state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
+    assert not keep_state_path.exists()
+    quality_csv = tmp_path / "runs" / "copy_a" / "quality_marked_targets.csv"
+    assert "wrong" in quality_csv.read_text(encoding="utf-8")
+
+
 def test_mark_difficult_target_keeps_data_and_records_csv(tmp_path):
     target_store = UploadedTargetStore(tmp_path / "runs")
     service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
@@ -297,6 +315,26 @@ def test_mark_difficult_target_keeps_data_and_records_csv(tmp_path):
     assert keep_state["target_status"] == "difficult"
     assert keep_state["sessions"][0]["target_status"] == "difficult"
     assert keep_state["sessions"][0]["is_deleted"] is False
+    quality_csv = tmp_path / "runs" / "copy_a" / "quality_marked_targets.csv"
+    quality_text = quality_csv.read_text(encoding="utf-8")
+    assert "difficult" in quality_text
+    assert "hard edge" in quality_text
+
+
+def test_mark_difficult_unsaved_target_records_quality_without_state_output(tmp_path):
+    target_store = UploadedTargetStore(tmp_path / "runs")
+    service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
+    target = _target(tmp_path)
+    target_store._targets_by_key[target.key] = target
+    session = _session(target, current_history_id="iter1")
+    service._save_session_outputs(session)
+
+    service.mark_difficult_target("target_a", reason="hard edge")
+
+    coco = json.loads(Path(session.target.annotation_json_path).read_text(encoding="utf-8"))
+    assert coco["annotations"][0]["segmentation"] == []
+    keep_state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
+    assert not keep_state_path.exists()
     quality_csv = tmp_path / "runs" / "copy_a" / "quality_marked_targets.csv"
     quality_text = quality_csv.read_text(encoding="utf-8")
     assert "difficult" in quality_text

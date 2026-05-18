@@ -8,6 +8,7 @@ import hashlib
 import importlib
 import importlib.util
 import json
+import mimetypes
 import os
 import shutil
 import sys
@@ -2627,7 +2628,42 @@ class MaskIterationService:
             }
         )
         (export_root / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        manifest["export_files"] = self.run_copy_file_manifest(export_root.name)["files"]
         return manifest
+
+    def run_copy_file_manifest(self, copy_id: str | None) -> dict[str, Any]:
+        normalized_copy_id, copy_root = self.target_store._require_existing_run_copy_root(copy_id)
+        files: list[dict[str, Any]] = []
+        for path in sorted(copy_root.rglob("*")):
+            if not path.is_file():
+                continue
+            relpath = path.relative_to(copy_root).as_posix()
+            mime_type, _ = mimetypes.guess_type(path.name)
+            files.append(
+                {
+                    "relpath": relpath,
+                    "size": path.stat().st_size,
+                    "mime_type": mime_type or "application/octet-stream",
+                }
+            )
+        return {
+            "copy_id": normalized_copy_id,
+            "copy_root": str(copy_root.resolve()),
+            "files": files,
+        }
+
+    def get_run_copy_export_file_path(self, copy_id: str | None, relpath: str) -> Path:
+        _, copy_root = self.target_store._require_existing_run_copy_root(copy_id)
+        normalized_relpath = str(relpath or "").replace("\\", "/").strip("/")
+        if not normalized_relpath:
+            raise FileNotFoundError("Missing export file relpath.")
+        candidate = (copy_root / normalized_relpath).resolve()
+        root = copy_root.resolve()
+        if candidate != root and root not in candidate.parents:
+            raise PermissionError("Export file path is outside the requested copy.")
+        if not candidate.exists() or not candidate.is_file():
+            raise FileNotFoundError(f"Export file not found: {normalized_relpath}")
+        return candidate
 
     def _build_validate_tools_payload(self) -> dict[str, Any]:
         base_dir = self.validate_tools_dir

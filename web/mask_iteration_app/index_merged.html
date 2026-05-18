@@ -806,10 +806,12 @@
                       <input id="exportDatasetNameInput" type="text" placeholder="例如：场景_20260507_153000">
                     </div>
                     <div class="field">
-                      <label for="annotationStateNameInput">状态标注命名</label>
-                      <input id="annotationStateNameInput" type="text" placeholder="如 原始/第2轮/复核版">
+                      <label for="exportPathDisplayInput">导出的数据的保存路径</label>
+                      <input id="exportPathDisplayInput" type="text" readonly placeholder="点击下方按钮选择保存目录">
+                      <input id="annotationStateNameInput" type="hidden" value="">
                     </div>
                   </div>
+                  <button id="chooseExportDirectoryBtn" class="import-export-action" type="button">选择保存路径</button>
                   <button id="exportWorkDatasetBtn" class="import-export-action" type="button">另存当前副本</button>
                 </div>
               </div>
@@ -1043,6 +1045,8 @@
       runCopyFolderUpload: document.getElementById("runCopyFolderUpload"),
       annotationStateNameInput: document.getElementById("annotationStateNameInput"),
       exportDatasetNameInput: document.getElementById("exportDatasetNameInput"),
+      exportPathDisplayInput: document.getElementById("exportPathDisplayInput"),
+      chooseExportDirectoryBtn: document.getElementById("chooseExportDirectoryBtn"),
       exportWorkDatasetBtn: document.getElementById("exportWorkDatasetBtn"),
       importBtn: document.getElementById("importBtn"),
       importRunCopyBtn: document.getElementById("importRunCopyBtn"),
@@ -1131,6 +1135,7 @@
       targetSourceLabel: "最近导入",
       currentImageSetId: "",
       currentAnnotationStateId: "",
+      exportDirectoryHandle: null,
       validateSession: null,
       selectedTargetKey: "",
       pendingNextTargetKey: "",
@@ -1491,6 +1496,9 @@
       const canCommitRegion = Boolean(hasRegionDraft && normalizeRegionPointsForSave(state.drawingRegion.points || []));
       const validateAvailable = Boolean(state.bootstrap && state.bootstrap.validate_tools && state.bootstrap.validate_tools.available);
       el.exportWorkDatasetBtn.disabled = !state.currentAnnotationStateId || state.busy;
+      if (el.chooseExportDirectoryBtn) {
+        el.chooseExportDirectoryBtn.disabled = state.busy;
+      }
       el.importBtn.disabled = state.busy;
       el.importRunCopyBtn.disabled = state.busy;
       el.prevTargetBtn.disabled = !hasTargets || state.busy;
@@ -2996,6 +3004,72 @@
       return null;
     }
 
+    async function chooseExportDirectory() {
+      if (!("showDirectoryPicker" in window)) {
+        state.exportDirectoryHandle = null;
+        if (el.exportPathDisplayInput) {
+          el.exportPathDisplayInput.value = "当前浏览器不支持目录选择，将保存在后端 runs 目录";
+        }
+        setStatus("当前浏览器不支持目录选择。请使用 Chrome/Edge，或使用后端 runs 目录中的导出副本。", true);
+        return null;
+      }
+      const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+      state.exportDirectoryHandle = handle;
+      if (el.exportPathDisplayInput) {
+        el.exportPathDisplayInput.value = handle.name;
+      }
+      return handle;
+    }
+
+    async function getOrCreateDirectory(parentHandle, name) {
+      return parentHandle.getDirectoryHandle(name, { create: true });
+    }
+
+    async function writeBlobToDirectory(rootHandle, relpath, blob) {
+      const parts = normalizeRelativePath(relpath).split("/").filter(Boolean);
+      if (!parts.length) return;
+      let directory = rootHandle;
+      for (const part of parts.slice(0, -1)) {
+        directory = await getOrCreateDirectory(directory, part);
+      }
+      const fileHandle = await directory.getFileHandle(parts[parts.length - 1], { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    }
+
+    async function copyExportFilesToChosenDirectory(payload) {
+      const files = Array.isArray(payload.export_files) ? payload.export_files : [];
+      if (!files.length) {
+        return { copied: 0, destination: "" };
+      }
+      let parentHandle = state.exportDirectoryHandle;
+      if (!parentHandle) {
+        parentHandle = await chooseExportDirectory();
+      }
+      if (!parentHandle) {
+        return { copied: 0, destination: "" };
+      }
+      const copyName = sanitizeRunCopyId(payload.copy_id || payload.annotation_state_id || payload.import_id || "exported_copy");
+      const copyHandle = await parentHandle.getDirectoryHandle(copyName, { create: true });
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        if (!file || !file.relpath) continue;
+        setBusy(`正在写入导出副本 ${index + 1}/${files.length}...`);
+        const url = `/api/work-dataset/export-file?copy_id=${encodeURIComponent(copyName)}&relpath=${encodeURIComponent(file.relpath)}`;
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`读取导出文件失败：${file.relpath}`);
+        }
+        await writeBlobToDirectory(copyHandle, file.relpath, await response.blob());
+      }
+      const destination = `${parentHandle.name}/${copyName}`;
+      if (el.exportPathDisplayInput) {
+        el.exportPathDisplayInput.value = destination;
+      }
+      return { copied: files.length, destination };
+    }
+
     async function exportCurrentWorkDatasetCopy() {
       const imageFolderLabel = getSelectedFolderLabel(Array.from(el.imageFolderUpload.files || [])) || state.currentImageSetId || "场景";
       const imageSetId = state.currentImageSetId;
@@ -3007,6 +3081,9 @@
         return;
       }
       try {
+        if (!state.exportDirectoryHandle && "showDirectoryPicker" in window) {
+          await chooseExportDirectory();
+        }
         setBusy("Saving a local copy...");
         const payload = await apiPost("/api/work-dataset/export", {
           image_set_id: imageSetId,
@@ -3021,7 +3098,13 @@
         if ((pairing.missing_image_files || []).length) {
           warnings.push(`无图片标注 ${pairing.missing_image_files.length}`);
         }
-        clearBusy(`当前副本已另存到: ${payload.copy_root || payload.export_root}${warnings.length ? `；配对警告：${warnings.join("，")}` : ""}`);
+        let copied = { copied: 0, destination: "" };
+        if (state.exportDirectoryHandle) {
+          copied = await copyExportFilesToChosenDirectory(payload);
+        }
+        const destination = copied.destination || payload.copy_root || payload.export_root;
+        const copiedText = copied.copied ? `，并已写入所选目录 ${copied.copied} 个文件` : "";
+        clearBusy(`当前副本已另存到: ${destination}${copiedText}${warnings.length ? `；配对警告：${warnings.join("，")}` : ""}`);
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -3691,13 +3774,16 @@
       try {
         setBusy("Marking current target as wrong...");
         const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/mark-wrong-target`, {});
-        const wrongKey = payload.wrong_target_key || payload.deleted_target_key || target.key;
         if (payload.bootstrap) {
           state.bootstrap = payload.bootstrap;
         }
-        removeTargetsAndStayNearCurrent((item) => item.key === wrongKey);
-        await openCurrentTarget();
-        clearBusy("Current target marked wrong. Next target loaded.");
+        if (state.session) {
+          state.session.target_status = payload.target_status || "wrong";
+          state.session.is_deleted = false;
+          state.session.deleted_at = null;
+        }
+        renderAll();
+        clearBusy("Current target marked wrong. You can keep segmenting this target.");
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -3718,9 +3804,13 @@
         if (payload.bootstrap) {
           state.bootstrap = payload.bootstrap;
         }
-        removeTargetsAndStayNearCurrent((item) => item.key === target.key);
-        await openCurrentTarget();
-        clearBusy("Marked difficult target and loaded the next target.");
+        if (state.session) {
+          state.session.target_status = payload.target_status || "difficult";
+          state.session.is_deleted = false;
+          state.session.deleted_at = null;
+        }
+        renderAll();
+        clearBusy("Marked difficult target. You can keep segmenting this target.");
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -4009,6 +4099,13 @@
       el.importBtn.addEventListener("click", importCurrentFoldersSafe);
       el.importRunCopyBtn.addEventListener("click", importRunCopyFolder);
       el.exportWorkDatasetBtn.addEventListener("click", exportCurrentWorkDatasetCopy);
+      if (el.chooseExportDirectoryBtn) {
+        el.chooseExportDirectoryBtn.addEventListener("click", () => {
+          chooseExportDirectory().catch((error) => {
+            setStatus(error.message || String(error), true);
+          });
+        });
+      }
       el.searchInput.addEventListener("input", () => {
         void refreshTargetQueueAndOpenSelected();
       });

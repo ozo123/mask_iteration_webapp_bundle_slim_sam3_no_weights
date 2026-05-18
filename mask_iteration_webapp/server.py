@@ -27,6 +27,11 @@ def create_handler(service, static_dir: Path):
                     return self._serve_static(relpath)
                 if path == "/api/bootstrap":
                     return self._send_json(HTTPStatus.OK, service.bootstrap_payload())
+                if path == "/api/work-dataset/export-file":
+                    query = parse_qs(parsed.query)
+                    copy_id = str((query.get("copy_id") or [""])[0]).strip()
+                    relpath = str((query.get("relpath") or [""])[0]).strip()
+                    return self._serve_work_dataset_export_file(copy_id, relpath)
                 if path.startswith("/api/targets/") and path.endswith("/image"):
                     target_key = unquote(path[len("/api/targets/") : -len("/image")]).strip("/")
                     return self._serve_image(target_key)
@@ -337,14 +342,32 @@ def create_handler(service, static_dir: Path):
             self.end_headers()
             self.wfile.write(body)
 
+        def _serve_work_dataset_export_file(self, copy_id: str, relpath: str) -> None:
+            export_path = service.get_run_copy_export_file_path(copy_id, relpath)
+            mime_type, _ = mimetypes.guess_type(export_path.name)
+            body = export_path.read_bytes()
+            self.send_response(int(HTTPStatus.OK))
+            self.send_header("Content-Type", mime_type or "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
         def _send_error_response(self, error: Exception) -> None:
             traceback.print_exc()
+            status = HTTPStatus.INTERNAL_SERVER_ERROR
+            if isinstance(error, PermissionError):
+                status = HTTPStatus.FORBIDDEN
+            elif isinstance(error, FileNotFoundError):
+                status = HTTPStatus.NOT_FOUND
+            elif isinstance(error, (KeyError, ValueError)):
+                status = HTTPStatus.BAD_REQUEST
             payload = {
                 "ok": False,
                 "error": str(error),
                 "error_type": error.__class__.__name__,
             }
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, payload)
+            self._send_json(status, payload)
 
     return MaskIterationRequestHandler
 

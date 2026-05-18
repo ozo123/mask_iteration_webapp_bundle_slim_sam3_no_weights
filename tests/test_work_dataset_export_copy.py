@@ -4,6 +4,7 @@ import sys
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -62,3 +63,12 @@ def test_export_work_dataset_copy_contains_current_images_annotations_and_pair_r
     assert manifest["pairing"]["matched_count"] == 1
     assert manifest["pairing"]["missing_annotation_files"] == []
     assert manifest["pairing"]["missing_image_files"] == []
+    relpaths = {item["relpath"] for item in export["export_files"]}
+    assert "manifest.json" in relpaths
+    assert "images/keep/a.png" in relpaths
+    assert "annotations/keep/coco/ann.json" in relpaths
+
+    export_file = service.get_run_copy_export_file_path("manual_name", "manifest.json")
+    assert export_file == export_root / "manifest.json"
+    with pytest.raises(PermissionError):
+        service.get_run_copy_export_file_path("manual_name", "../outside.txt")
