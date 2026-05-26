@@ -351,6 +351,46 @@
       justify-self: start;
       min-width: 180px;
     }
+    .source-info-panel {
+      display: grid;
+      gap: 6px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #fff;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .source-info-panel[hidden] {
+      display: none;
+    }
+    .source-info-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+      font-weight: 760;
+    }
+    .source-info-list {
+      display: grid;
+      gap: 5px;
+      max-height: 180px;
+      overflow: auto;
+    }
+    .source-info-item {
+      display: grid;
+      gap: 2px;
+      padding: 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+    .source-info-path {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
     .viewer-stack {
       display: grid;
       grid-template-rows: minmax(0, 1fr) auto;
@@ -837,6 +877,7 @@
                     </div>
                   </div>
                   <button id="importRunCopyBtn" class="import-export-action" type="button">导入当前副本</button>
+                  <button id="importSourceInfoBtn" class="import-export-action" type="button" disabled>查看导入文件</button>
                 </div>
                 <div class="import-export-column">
                   <div class="import-export-row">
@@ -853,6 +894,13 @@
                   <button id="chooseExportDirectoryBtn" class="import-export-action" type="button">选择保存路径</button>
                   <button id="exportWorkDatasetBtn" class="import-export-action" type="button">另存当前副本</button>
                 </div>
+              </div>
+              <div id="importSourceInfoPanel" class="source-info-panel" hidden>
+                <div class="source-info-header">
+                  <span id="importSourceInfoTitle">尚未导入文件</span>
+                  <span id="importSourceInfoCount" class="mini-pill">0</span>
+                </div>
+                <div id="importSourceInfoList" class="source-info-list"></div>
               </div>
             </div>
           </details>
@@ -1092,6 +1140,11 @@
       exportWorkDatasetBtn: document.getElementById("exportWorkDatasetBtn"),
       importBtn: document.getElementById("importBtn"),
       importRunCopyBtn: document.getElementById("importRunCopyBtn"),
+      importSourceInfoBtn: document.getElementById("importSourceInfoBtn"),
+      importSourceInfoPanel: document.getElementById("importSourceInfoPanel"),
+      importSourceInfoTitle: document.getElementById("importSourceInfoTitle"),
+      importSourceInfoCount: document.getElementById("importSourceInfoCount"),
+      importSourceInfoList: document.getElementById("importSourceInfoList"),
       queueMetric: document.getElementById("queueMetric"),
       savedAnnotationSummary: document.getElementById("savedAnnotationSummary"),
       sourceSummary: document.getElementById("sourceSummary"),
@@ -1178,6 +1231,8 @@
       targets: [],
       filteredTargets: [],
       targetSourceLabel: "最近导入",
+      importSourceInfo: null,
+      importSourceInfoOpen: false,
       currentImageSetId: "",
       currentAnnotationStateId: "",
       exportDirectoryHandle: null,
@@ -1520,6 +1575,97 @@
       }
     }
 
+    function filePathLabel(file) {
+      return normalizeRelativePath(file && (file.webkitRelativePath || file.name));
+    }
+
+    function extractImportSourceFiles(payload) {
+      const imports = Array.isArray(payload && payload.imports) ? payload.imports : [];
+      const byKey = new Map();
+      imports.forEach((item) => {
+        const sources = Array.isArray(item && item.source_files) ? item.source_files : [];
+        sources.forEach((source) => {
+          if (!source || typeof source !== "object") return;
+          const key = [
+            source.image_relative_path || source.image_file_name || "",
+            source.annotation_relative_path || source.source_annotation_file_name || source.annotation_file_name || "",
+          ].join("\n");
+          byKey.set(key, {
+            copy_root: source.copy_root || item.copy_root || "",
+            image_file_name: source.image_file_name || "",
+            image_relative_path: source.image_relative_path || "",
+            image_path: source.image_path || "",
+            annotation_file_name: source.source_annotation_file_name || source.annotation_file_name || "",
+            annotation_relative_path: source.annotation_relative_path || "",
+            annotation_json_path: source.annotation_json_path || "",
+            restored_from_working_copy: Boolean(source.restored_from_working_copy),
+          });
+        });
+      });
+      return Array.from(byKey.values());
+    }
+
+    function setImportSourceInfo(info) {
+      state.importSourceInfo = info || null;
+      state.importSourceInfoOpen = false;
+      renderImportSourceInfo();
+      renderButtons();
+    }
+
+    function renderImportSourceInfo() {
+      const info = state.importSourceInfo;
+      const files = Array.isArray(info && info.files) ? info.files : [];
+      if (el.importSourceInfoBtn) {
+        el.importSourceInfoBtn.textContent = state.importSourceInfoOpen ? "收起导入文件" : "查看导入文件";
+      }
+      if (el.importSourceInfoPanel) {
+        el.importSourceInfoPanel.hidden = !state.importSourceInfoOpen || !info;
+      }
+      if (!info) {
+        if (el.importSourceInfoTitle) el.importSourceInfoTitle.textContent = "尚未导入文件";
+        if (el.importSourceInfoCount) el.importSourceInfoCount.textContent = "0";
+        if (el.importSourceInfoList) el.importSourceInfoList.textContent = "";
+        return;
+      }
+      if (el.importSourceInfoTitle) {
+        const copyText = info.copy_id ? ` | 副本 ${info.copy_id}` : "";
+        const rootText = info.copy_root ? ` | 保存到 ${info.copy_root}` : "";
+        el.importSourceInfoTitle.textContent = `${info.title || info.mode || "导入文件"}${copyText}${rootText}`;
+      }
+      if (el.importSourceInfoCount) {
+        el.importSourceInfoCount.textContent = `${files.length} 组`;
+      }
+      if (!el.importSourceInfoList) return;
+      el.importSourceInfoList.textContent = "";
+      files.forEach((file, index) => {
+        const item = document.createElement("div");
+        item.className = "source-info-item";
+
+        const title = document.createElement("strong");
+        title.textContent = `${index + 1}. ${file.annotation_file_name || file.annotation_name || "annotation"} -> ${file.image_file_name || file.image_name || "image"}`;
+        item.appendChild(title);
+
+        const annotationPath = document.createElement("div");
+        annotationPath.className = "source-info-path";
+        annotationPath.textContent = `标注来源: ${file.annotation_relative_path || file.annotation_json_path || file.annotation_file_name || "-"}`;
+        item.appendChild(annotationPath);
+
+        const imagePath = document.createElement("div");
+        imagePath.className = "source-info-path";
+        imagePath.textContent = `图片来源: ${file.image_relative_path || file.image_path || file.image_file_name || "-"}`;
+        item.appendChild(imagePath);
+
+        if (file.image_path || file.annotation_json_path) {
+          const savedPath = document.createElement("div");
+          savedPath.className = "source-info-path";
+          savedPath.textContent = `工作副本: ${file.image_path || "-"} | ${file.annotation_json_path || "-"}`;
+          item.appendChild(savedPath);
+        }
+
+        el.importSourceInfoList.appendChild(item);
+      });
+    }
+
     function applyTargets(targets, sourceLabel) {
       const incomingTargets = Array.isArray(targets) ? targets.slice() : [];
       const queueTargets = incomingTargets.filter(isQueueTarget);
@@ -1593,6 +1739,9 @@
       }
       el.importBtn.disabled = state.busy;
       el.importRunCopyBtn.disabled = state.busy;
+      if (el.importSourceInfoBtn) {
+        el.importSourceInfoBtn.disabled = !state.importSourceInfo || state.busy;
+      }
       el.prevTargetBtn.disabled = !hasTargets || state.busy;
       el.nextTargetBtn.disabled = !hasTargets || state.busy;
       el.iterateBtn.disabled = !hasSession || state.busy || hasLockedRegions;
@@ -3376,6 +3525,8 @@
         const skipped = [];
         const failed = [];
         const matchedImageNames = new Set();
+        const selectedSourceFiles = [];
+        let importedSourceFiles = [];
         let pendingImports = [];
         const imageDataUrlCache = new Map();
         let uploadedImportCount = 0;
@@ -3401,6 +3552,10 @@
             const payload = await apiPost("/api/import-targets/batch", { items: chunk });
             importedTargets.push(...(payload.targets || []));
             recordRestoredSessions(payload);
+            const sourceFiles = extractImportSourceFiles(payload);
+            if (sourceFiles.length) {
+              importedSourceFiles = sourceFiles;
+            }
             for (const item of (payload.errors || [])) {
               failed.push(`${item.annotation_file_name || "annotation"}: ${item.error || "import failed"}`);
             }
@@ -3452,6 +3607,12 @@
               image_relative_path: imageFile.webkitRelativePath || imageFile.name,
               annotation_relative_path: annotationFile.webkitRelativePath || annotationFile.name,
             });
+            selectedSourceFiles.push({
+              image_file_name: imageFile.name,
+              image_relative_path: filePathLabel(imageFile),
+              annotation_file_name: annotationFile.name,
+              annotation_relative_path: filePathLabel(annotationFile),
+            });
             if (pendingImports.length >= IMPORT_BATCH_SIZE) {
               await flushPendingImports();
             }
@@ -3480,6 +3641,13 @@
 
         state.currentImageSetId = imageSetId;
         state.currentAnnotationStateId = annotationStateId;
+        setImportSourceInfo({
+          mode: "分开导入",
+          title: `分开导入: ${imageSetLabel} / ${annotationStateLabel}`,
+          copy_id: copyId,
+          copy_root: importedSourceFiles.find((item) => item.copy_root)?.copy_root || "",
+          files: importedSourceFiles.length ? importedSourceFiles : selectedSourceFiles,
+        });
         applyTargets(
           importedTargets,
           `图片: ${imageSetLabel} | 标注状态: ${annotationStateLabel} | ${annotationFiles.length} 个标注文件`
@@ -3526,6 +3694,13 @@
 
         state.currentImageSetId = payload.image_set_id || selection.copyId;
         state.currentAnnotationStateId = payload.annotation_state_id || selection.copyId;
+        setImportSourceInfo({
+          mode: "导入副本",
+          title: `导入副本: ${selection.copyId}`,
+          copy_id: selection.copyId,
+          copy_root: (payload.source_files || []).find((item) => item.copy_root)?.copy_root || "",
+          files: payload.source_files || [],
+        });
         applyTargets(
           importedTargets,
           `副本: ${selection.copyId} | 图片 ${selection.keptImageCount} | state ${selection.keptStateCount} | coco ${selection.keptCocoCount}`
@@ -3554,6 +3729,8 @@
       const imageIndex = buildImageFileIndex(files.images);
       const importedTargets = [];
       const failed = [];
+      const selectedSourceFiles = [];
+      let importedSourceFiles = [];
       const restoredSessionKeys = new Set();
       let pendingImports = [];
       const imageDataUrlCache = new Map();
@@ -3579,6 +3756,10 @@
               didReplaceRunCopy = true;
             }
             importedTargets.push(...(payload.targets || []));
+            const sourceFiles = extractImportSourceFiles(payload);
+            if (sourceFiles.length) {
+              importedSourceFiles = sourceFiles;
+            }
             for (const key of payload.restored_session_keys || []) {
               restoredSessionKeys.add(String(key));
             }
@@ -3635,6 +3816,12 @@
             image_relative_path: imageFile.webkitRelativePath || imageFile.name,
             annotation_relative_path: annotationFile.webkitRelativePath || annotationFile.name,
           });
+          selectedSourceFiles.push({
+            image_file_name: imageFile.name,
+            image_relative_path: filePathLabel(imageFile),
+            annotation_file_name: annotationFile.name,
+            annotation_relative_path: filePathLabel(annotationFile),
+          });
         } catch (error) {
           failed.push(`${annotationFile.name}: ${error.message || error}`);
         }
@@ -3649,6 +3836,7 @@
         targets: importedTargets,
         errors: failed.map((error) => ({ error })),
         restored_session_keys: Array.from(restoredSessionKeys),
+        source_files: importedSourceFiles.length ? importedSourceFiles : selectedSourceFiles,
       };
     }
 
@@ -4224,6 +4412,12 @@
     function bindEvents() {
       el.importBtn.addEventListener("click", importCurrentFoldersSafe);
       el.importRunCopyBtn.addEventListener("click", importRunCopyFolder);
+      if (el.importSourceInfoBtn) {
+        el.importSourceInfoBtn.addEventListener("click", () => {
+          state.importSourceInfoOpen = !state.importSourceInfoOpen;
+          renderImportSourceInfo();
+        });
+      }
       el.exportWorkDatasetBtn.addEventListener("click", exportCurrentWorkDatasetCopy);
       if (el.chooseExportDirectoryBtn) {
         el.chooseExportDirectoryBtn.addEventListener("click", () => {
@@ -4325,6 +4519,7 @@
     renderCategoryFilter();
     renderTargetList();
     renderSourceSummary();
+    renderImportSourceInfo();
     renderMeta();
     renderPointList();
     renderStrokeList();
