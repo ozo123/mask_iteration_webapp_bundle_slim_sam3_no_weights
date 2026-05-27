@@ -345,16 +345,20 @@ def test_locked_regions_apply_background_over_foreground(tmp_path):
         current_history_id="init",
     )
 
+    previous_mask = np.zeros((10, 10), dtype=bool)
+    previous_mask[8, 8] = True
     mask, logits = service._apply_locked_regions_to_mask_and_logits(
         session,
-        np.zeros((10, 10), dtype=bool),
+        previous_mask,
         np.zeros((1, 10, 10), dtype=np.float32),
     )
 
     assert bool(mask[2, 2]) is True
     assert bool(mask[4, 4]) is False
+    assert bool(mask[8, 8]) is False
     assert float(logits[0, 2, 2]) == 32.0
     assert float(logits[0, 4, 4]) == -32.0
+    assert float(logits[0, 8, 8]) == -32.0
 
 
 def test_locked_regions_background_wins_even_when_added_first(tmp_path):
@@ -392,6 +396,60 @@ def test_locked_regions_background_wins_even_when_added_first(tmp_path):
     assert bool(mask[4, 4]) is False
     assert float(logits[0, 2, 2]) == 32.0
     assert float(logits[0, 4, 4]) == -32.0
+
+
+def test_deleting_last_locked_region_leaves_current_mask_empty(tmp_path):
+    target = _target(tmp_path)
+    target_store = UploadedTargetStore(tmp_path / "runs")
+    session_store = SessionStore(tmp_path / "sessions")
+    inference = RecordingIterationInference()
+    service = MaskIterationService(target_store, session_store, inference)
+    initial_mask = np.zeros((10, 10), dtype=bool)
+    initial_mask[8, 8] = True
+    session = SessionState(
+        schema_version=1,
+        session_id=target.key,
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+        target=target,
+        prompt_box_xyxy=[2.0, 2.0, 6.0, 6.0],
+        system_prompt_points=[],
+        working_points=[],
+        line_strokes=[],
+        locked_regions=[],
+        text_prompt="",
+        history=[
+            HistoryRecord(
+                history_id="init",
+                parent_history_id=None,
+                name="init",
+                kind="initial",
+                created_at="2026-01-01T00:00:00+00:00",
+                score=0.75,
+                mask_rle=inference._mask_to_rle(initial_mask),
+                mask_area=1,
+                mask_bbox_xywh=[8.0, 8.0, 1.0, 1.0],
+                prompt_box_xyxy=[2.0, 2.0, 6.0, 6.0],
+            )
+        ],
+        current_history_id="init",
+    )
+    session_store.save_session(session)
+
+    service.lock_region(target.key, [{"x": 1, "y": 1}, {"x": 5, "y": 1}, {"x": 5, "y": 5}, {"x": 1, "y": 5}], 1)
+    locked = session_store.load_session(target.key)
+    assert locked is not None
+    assert locked.current_history().mask_area > 0
+    assert bool(inference.mask_from_rle(locked.current_history().mask_rle)[8, 8]) is False
+
+    service.delete_locked_region(target.key, locked.locked_regions[0].region_id)
+
+    updated = session_store.load_session(target.key)
+    assert updated is not None
+    assert updated.locked_regions == []
+    assert [item.kind for item in updated.history] == ["initial", "region_lock", "region_unlock"]
+    assert updated.current_history().mask_area == 0
+    assert int(inference.mask_from_rle(updated.current_history().mask_rle).sum()) == 0
 
 
 def test_iteration_strips_generated_points_before_inference(tmp_path):

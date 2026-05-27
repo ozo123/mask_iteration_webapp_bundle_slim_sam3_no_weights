@@ -4118,63 +4118,24 @@ class MaskIterationService:
         np = runtime["np"]
         if not session.locked_regions:
             return np.asarray(mask).astype(bool), np.asarray(logits, dtype=np.float32)
-        combined_mask = np.asarray(mask).astype(bool).copy()
-        updated_logits = np.asarray(logits, dtype=np.float32).copy()
+        return self._locked_regions_to_mask_and_logits(session)
+
+    def _locked_regions_to_mask_and_logits(self, session: SessionState) -> tuple[Any, Any]:
+        runtime = self.inference_service._load_runtime()
+        np = runtime["np"]
+        combined_mask = np.zeros(
+            (int(session.target.image_height), int(session.target.image_width)),
+            dtype=bool,
+        )
         background_mask = np.zeros_like(combined_mask, dtype=bool)
-        background_logits_mask = None
         for region in session.locked_regions:
             locked_mask = self._locked_region_mask(session, region)
             if int(region.label) == 1:
                 combined_mask[locked_mask] = True
-                logits_value = 32.0
             else:
                 background_mask |= locked_mask
-                logits_value = -32.0
-            if updated_logits.ndim == 3 and updated_logits.shape[0] >= 1:
-                logits_locked_mask = self._resize_bool_mask(
-                    locked_mask,
-                    updated_logits.shape[-2],
-                    updated_logits.shape[-1],
-                )
-                if logits_value > 0:
-                    updated_logits[0][logits_locked_mask] = np.maximum(
-                        updated_logits[0][logits_locked_mask],
-                        logits_value,
-                    )
-                else:
-                    updated_logits[0][logits_locked_mask] = np.minimum(
-                        updated_logits[0][logits_locked_mask],
-                        logits_value,
-                    )
-                    background_logits_mask = (
-                        logits_locked_mask
-                        if background_logits_mask is None
-                        else (background_logits_mask | logits_locked_mask)
-                    )
-            elif updated_logits.ndim == 2:
-                logits_locked_mask = self._resize_bool_mask(
-                    locked_mask,
-                    updated_logits.shape[0],
-                    updated_logits.shape[1],
-                )
-                if logits_value > 0:
-                    updated_logits[logits_locked_mask] = np.maximum(updated_logits[logits_locked_mask], logits_value)
-                else:
-                    updated_logits[logits_locked_mask] = np.minimum(updated_logits[logits_locked_mask], logits_value)
-                    background_logits_mask = (
-                        logits_locked_mask
-                        if background_logits_mask is None
-                        else (background_logits_mask | logits_locked_mask)
-                    )
         combined_mask[background_mask] = False
-        if background_logits_mask is not None:
-            if updated_logits.ndim == 3 and updated_logits.shape[0] >= 1:
-                updated_logits[0][background_logits_mask] = np.minimum(
-                    updated_logits[0][background_logits_mask],
-                    -32.0,
-                )
-            elif updated_logits.ndim == 2:
-                updated_logits[background_logits_mask] = np.minimum(updated_logits[background_logits_mask], -32.0)
+        updated_logits = self._fallback_logits_from_mask(combined_mask)
         return combined_mask, updated_logits
 
     def _build_history_from_mask_and_logits(
@@ -4786,13 +4747,7 @@ class MaskIterationService:
                 raise ValueError("Locked region requires at least 3 distinct points and a non-trivial polygon area.")
 
             session.locked_regions.append(normalized[0])
-            current_mask = self.inference_service.mask_from_rle(current.mask_rle)
-            current_logits = self._ensure_history_logits(session, current)
-            combined_mask, updated_logits = self._apply_locked_regions_to_mask_and_logits(
-                session,
-                current_mask,
-                current_logits,
-            )
+            combined_mask, updated_logits = self._locked_regions_to_mask_and_logits(session)
 
             history_index = sum(1 for item in session.history if item.kind == "region_lock") + 1
             history_id = f"lock_{uuid4().hex[:12]}"
@@ -4827,8 +4782,7 @@ class MaskIterationService:
                 raise KeyError(f"Locked region not found: {region_id}")
 
             current = session.current_history()
-            current_mask = self.inference_service.mask_from_rle(current.mask_rle)
-            updated_logits = self._fallback_logits_from_mask(current_mask)
+            current_mask, updated_logits = self._locked_regions_to_mask_and_logits(session)
             history_index = sum(1 for item in session.history if item.kind == "region_unlock") + 1
             history_id = f"unlock_{uuid4().hex[:12]}"
             created_at = utc_now_iso()
