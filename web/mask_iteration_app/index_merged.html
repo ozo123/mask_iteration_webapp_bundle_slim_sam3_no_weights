@@ -930,8 +930,8 @@
         <div class="field span-4">
           <label>导航</label>
           <div class="button-row">
-            <button id="prevTargetBtn" type="button">上一个</button>
-            <button id="nextTargetBtn" type="button">下一个</button>
+            <button id="prevTargetBtn" type="button">上一个 (A)</button>
+            <button id="nextTargetBtn" type="button">下一个 (D)</button>
           </div>
         </div>
 
@@ -982,9 +982,9 @@
         <div class="toolbar-group">
           <div class="section-title">主要操作</div>
           <div class="toolbar-primary">
-            <button id="iterateBtn" type="button">迭代一次</button>
+            <button id="iterateBtn" type="button">迭代一次 (Space)</button>
             <button id="saveLockedOnlyBtn" class="save-mask-btn" type="button">保存锁区</button>
-            <button id="saveCurrentMaskBtn" class="save-mask-btn" type="button">保存锁区+Mask</button>
+            <button id="saveCurrentMaskBtn" class="save-mask-btn" type="button">保存锁区+Mask (Enter)</button>
           </div>
           <div id="maskSourceSummary" class="mask-status-line">当前 Mask 来源：等待打开目标</div>
           <div id="maskSaveSummary" class="mask-status-line">State 自动保存，COCO 未手动保存</div>
@@ -995,9 +995,10 @@
           <div class="toolbar-grid two-col">
             <button id="pointToolBtn" class="tool-btn" type="button">点模式</button>
             <button id="lineToolBtn" class="tool-btn" type="button">线模式</button>
-            <button id="lockRegionToolBtn" class="tool-btn" type="button">闭合锁区</button>
+            <button id="lockRegionToolBtn" class="tool-btn" type="button">闭合锁区 (F)</button>
             <button id="panToolBtn" class="tool-btn" type="button">平移模式</button>
             <button id="commitRegionBtn" class="tool-btn" type="button">固定锁区</button>
+            <button id="undoRegionPointBtn" class="tool-btn" type="button">撤销锁区点 (E)</button>
             <button id="cancelRegionBtn" class="tool-btn" type="button">取消锁区</button>
           </div>
           <div class="subtle">闭合锁区草稿会跟随当前目标显示。</div>
@@ -1007,7 +1008,7 @@
           <div class="section-title">当前点标签</div>
           <div class="toolbar-grid two-col">
             <button id="fgModeBtn" class="toggle-btn" type="button">前景点 (1)</button>
-            <button id="bgModeBtn" class="toggle-btn" type="button">背景点 (0)</button>
+            <button id="bgModeBtn" class="toggle-btn" type="button">背景点 (2)</button>
           </div>
         </div>
 
@@ -1184,6 +1185,7 @@
       lockRegionToolBtn: document.getElementById("lockRegionToolBtn"),
       panToolBtn: document.getElementById("panToolBtn"),
       commitRegionBtn: document.getElementById("commitRegionBtn"),
+      undoRegionPointBtn: document.getElementById("undoRegionPointBtn"),
       cancelRegionBtn: document.getElementById("cancelRegionBtn"),
       textPromptInput: document.getElementById("textPromptInput"),
       targetStatusBtn: document.getElementById("targetStatusBtn"),
@@ -1380,6 +1382,22 @@
       state.drawingRegion.active = false;
       state.drawingRegion.points = [];
       state.drawingRegion.hoverPoint = null;
+    }
+
+    function undoDrawingRegionPoint() {
+      if (state.currentTool !== "region" || state.busy) return false;
+      const points = state.drawingRegion.points || [];
+      if (!state.drawingRegion.active || !points.length) return false;
+      points.pop();
+      if (!points.length) {
+        resetDrawingRegion();
+      } else {
+        state.drawingRegion.points = points;
+        state.drawingRegion.hoverPoint = points[points.length - 1];
+      }
+      updateRegionToolStatus();
+      renderCanvas();
+      return true;
     }
 
     function getRegionCloseThreshold() {
@@ -1794,6 +1812,7 @@
       el.lockRegionToolBtn.disabled = !hasSession || state.busy;
       el.panToolBtn.disabled = !hasSession || state.busy;
       el.commitRegionBtn.disabled = !hasSession || state.busy || !canCommitRegion;
+      el.undoRegionPointBtn.disabled = !hasSession || state.busy || !hasRegionDraft;
       el.cancelRegionBtn.disabled = !hasSession || state.busy || !hasRegionDraft;
       el.markWrongTargetBtn.disabled = !hasSession || state.busy;
       el.markDifficultBtn.disabled = !hasSession || state.busy;
@@ -2548,6 +2567,7 @@
               <div class="button-row">
                 <span class="subtle">${draftPoints.length} pts | area ${Math.round(draftArea)}</span>
                 <button class="small-button" data-region-commit="draft" type="button" ${draftReady ? "" : "disabled"}>固定</button>
+                <button class="small-button" data-region-undo="draft" type="button">撤销点</button>
                 <button class="small-button" data-region-cancel="draft" type="button">取消</button>
               </div>
             </div>
@@ -2581,6 +2601,12 @@
         button.addEventListener("click", () => {
           if (state.busy) return;
           void completeDrawingRegion();
+        });
+      });
+      el.lockedRegionList.querySelectorAll("[data-region-undo]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (state.busy) return;
+          undoDrawingRegionPoint();
         });
       });
       el.lockedRegionList.querySelectorAll("[data-region-cancel]").forEach((button) => {
@@ -4457,9 +4483,28 @@
       }
     }
 
+    function shouldIgnoreGlobalShortcut(event) {
+      const target = event.target;
+      if (!target) return false;
+      const tagName = String(target.tagName || "").toLowerCase();
+      if (target.isContentEditable || tagName === "input" || tagName === "textarea" || tagName === "select") {
+        return true;
+      }
+      return tagName === "button" && (
+        event.key === "Enter" ||
+        event.key === "NumpadEnter" ||
+        event.key === " " ||
+        event.key === "Spacebar"
+      );
+    }
+
     function handleGlobalKeyDown(event) {
-      if (state.currentTool !== "region" || state.busy) return;
+      if (shouldIgnoreGlobalShortcut(event)) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const key = event.key && event.key.length === 1 ? event.key.toLowerCase() : event.key;
+      if (state.busy) return;
       if (event.key === "Escape") {
+        if (state.currentTool !== "region") return;
         if (!state.drawingRegion.active || !(state.drawingRegion.points || []).length) return;
         event.preventDefault();
         resetDrawingRegion();
@@ -4467,10 +4512,53 @@
         renderCanvas();
         return;
       }
-      if (event.key === "Enter" || event.key === "NumpadEnter") {
-        if (!state.drawingRegion.active) return;
+      if (key === "1") {
         event.preventDefault();
-        void completeDrawingRegion();
+        state.currentLabel = 1;
+        toggleModeButtons();
+        renderCanvas();
+        return;
+      }
+      if (key === "2") {
+        event.preventDefault();
+        state.currentLabel = 0;
+        toggleModeButtons();
+        renderCanvas();
+        return;
+      }
+      if (key === "a") {
+        if (el.prevTargetBtn.disabled) return;
+        event.preventDefault();
+        void gotoRelativeTarget(-1);
+        return;
+      }
+      if (key === "d") {
+        if (el.nextTargetBtn.disabled) return;
+        event.preventDefault();
+        void gotoRelativeTarget(1);
+        return;
+      }
+      if (key === "f") {
+        if (el.lockRegionToolBtn.disabled) return;
+        event.preventDefault();
+        setCurrentTool("region");
+        return;
+      }
+      if (key === "e") {
+        if (!undoDrawingRegionPoint()) return;
+        event.preventDefault();
+        return;
+      }
+      if (event.key === " " || event.key === "Spacebar") {
+        if (el.iterateBtn.disabled) return;
+        event.preventDefault();
+        void handleIterate();
+        return;
+      }
+      if (event.key === "Enter" || event.key === "NumpadEnter") {
+        if (el.saveCurrentMaskBtn.disabled) return;
+        event.preventDefault();
+        void handleSaveCurrentMask();
       }
     }
 
@@ -4528,6 +4616,9 @@
       el.commitRegionBtn.addEventListener("click", () => {
         if (state.currentTool !== "region" || state.busy) return;
         void completeDrawingRegion();
+      });
+      el.undoRegionPointBtn.addEventListener("click", () => {
+        undoDrawingRegionPoint();
       });
       el.cancelRegionBtn.addEventListener("click", () => {
         if (state.currentTool !== "region" || state.busy) return;

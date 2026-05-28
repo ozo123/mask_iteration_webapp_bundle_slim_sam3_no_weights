@@ -182,3 +182,58 @@ def test_locked_region_list_renders_foreground_background_labels():
 
     assert "Number(region.label) === 0 ? \"BG\" : \"FG\"" in list_body
     assert "Number(region.label) === 0 ? \"bg\" : \"fg\"" in list_body
+
+
+def test_keyboard_shortcut_labels_are_visible_on_buttons():
+    html = _html()
+
+    button_expectations = {
+        'id="prevTargetBtn"': "(A)",
+        'id="nextTargetBtn"': "(D)",
+        'id="iterateBtn"': "(Space)",
+        'id="saveCurrentMaskBtn"': "(Enter)",
+        'id="lockRegionToolBtn"': "(F)",
+        'id="undoRegionPointBtn"': "(E)",
+        'id="fgModeBtn"': "(1)",
+        'id="bgModeBtn"': "(2)",
+    }
+    for marker, shortcut in button_expectations.items():
+        start = html.index(marker)
+        button_html = html[start:html.index("</button>", start)]
+        assert shortcut in button_html
+
+
+def test_global_shortcuts_map_requested_keys_without_text_input_hijack():
+    html = _html()
+
+    handler_start = html.index("function handleGlobalKeyDown")
+    handler_body = html[handler_start:html.index("function bindEvents", handler_start)]
+
+    assert "shouldIgnoreGlobalShortcut(event)" in handler_body
+    assert 'tagName === "input"' in html
+    assert 'tagName === "textarea"' in html
+    assert 'tagName === "select"' in html
+    assert 'key === "1"' in handler_body
+    assert 'key === "2"' in handler_body
+    assert 'key === "a"' in handler_body
+    assert 'key === "d"' in handler_body
+    assert 'key === "f"' in handler_body
+    assert 'key === "e"' in handler_body
+    assert 'event.key === " " || event.key === "Spacebar"' in handler_body
+    assert 'event.key === "Enter" || event.key === "NumpadEnter"' in handler_body
+    assert "void handleIterate()" in handler_body
+    assert "void handleSaveCurrentMask()" in handler_body
+    assert "undoDrawingRegionPoint()" in handler_body
+    assert "completeDrawingRegion" not in handler_body
+
+
+def test_locked_region_draft_has_point_undo_button():
+    html = _html()
+
+    list_start = html.index("function renderLockedRegionList")
+    list_body = html[list_start:html.index("function renderHistoryList", list_start)]
+
+    assert 'id="undoRegionPointBtn"' in html
+    assert "function undoDrawingRegionPoint" in html
+    assert "data-region-undo" in list_body
+    assert "el.undoRegionPointBtn.disabled = !hasSession || state.busy || !hasRegionDraft" in html
