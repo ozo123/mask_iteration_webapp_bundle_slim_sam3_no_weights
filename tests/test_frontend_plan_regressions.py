@@ -203,6 +203,28 @@ def test_keyboard_shortcut_labels_are_visible_on_buttons():
         assert shortcut in button_html
 
 
+def test_mask_editing_toolbar_keeps_controls_accessible_on_small_viewports():
+    html = _html()
+
+    toolbar_start = html.index(".canvas-toolbar {")
+    toolbar_block = html[toolbar_start:html.index("}", toolbar_start)]
+    toolbar_button_start = html.index(".toolbar-grid button,")
+    toolbar_button_block = html[toolbar_button_start:html.index("}", toolbar_button_start)]
+    narrow_media_start = html.index("@media (max-width: 860px)")
+    narrow_media_block = html[narrow_media_start:html.index("@media (max-height: 760px)", narrow_media_start)]
+    mobile_media_start = html.index("@media (max-width: 680px)")
+    mobile_media_block = html[mobile_media_start:html.index("</style>", mobile_media_start)]
+
+    assert "overflow-y: auto" in toolbar_block
+    assert "overflow-x: hidden" in toolbar_block
+    assert "max-height: 100%" in toolbar_block
+    assert "white-space: normal" in toolbar_button_block
+    assert "overflow-wrap: anywhere" in toolbar_button_block
+    assert ".toolbar-grid.two-col { grid-template-columns: 1fr; }" in narrow_media_block
+    assert "grid-template-columns: 1fr" in mobile_media_block
+    assert "max-height: 42vh" in mobile_media_block
+
+
 def test_global_shortcuts_map_requested_keys_without_text_input_hijack():
     html = _html()
 
