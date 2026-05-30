@@ -2958,7 +2958,7 @@ class MaskIterationService:
 
     @staticmethod
     def _is_locked_region_history(history_item: HistoryRecord) -> bool:
-        return history_item.kind in {"region_lock", "region_unlock"}
+        return history_item.kind in {"region_lock", "region_unlock", "region_edit"}
 
     def _base_mask_history_for_save(self, session: SessionState) -> HistoryRecord:
         current = session.current_history()
@@ -4877,6 +4877,7 @@ class MaskIterationService:
     def delete_locked_region(self, target_key: str, region_id: str) -> dict[str, Any]:
         with self._lock:
             session = self._require_session(target_key)
+            base_history = self._base_mask_history_for_save(session)
             before_count = len(session.locked_regions)
             session.locked_regions = [
                 region for region in session.locked_regions if region.region_id != region_id
@@ -4885,8 +4886,13 @@ class MaskIterationService:
                 raise KeyError(f"Locked region not found: {region_id}")
 
             current = session.current_history()
-            current_mask = self.inference_service.mask_from_rle(current.mask_rle)
-            updated_logits = self._fallback_logits_from_mask(current_mask)
+            base_mask = self.inference_service.mask_from_rle(base_history.mask_rle)
+            base_logits = self._ensure_history_logits(session, base_history)
+            current_mask, updated_logits = self._apply_locked_regions_to_mask_and_logits(
+                session,
+                base_mask,
+                base_logits,
+            )
             history_index = sum(1 for item in session.history if item.kind == "region_unlock") + 1
             history_id = f"unlock_{uuid4().hex[:12]}"
             created_at = utc_now_iso()
@@ -4898,6 +4904,65 @@ class MaskIterationService:
                 kind="region_unlock",
                 created_at=created_at,
                 mask=current_mask,
+                logits=updated_logits,
+                score=current.score,
+            )
+            session.history.append(new_history)
+            logits_relpath = self.session_store.save_logits(session, history_id, updated_logits)
+            new_history.mask_logits_relpath = logits_relpath
+            session.current_history_id = history_id
+            session.updated_at = created_at
+            self._save_session_outputs(session)
+            return self._session_payload(session)
+
+    def update_locked_region(self, target_key: str, region_id: str, points: Any) -> dict[str, Any]:
+        with self._lock:
+            session = self._require_session(target_key)
+            base_history = self._base_mask_history_for_save(session)
+            region_index = next(
+                (index for index, region in enumerate(session.locked_regions) if region.region_id == region_id),
+                None,
+            )
+            if region_index is None:
+                raise KeyError(f"Locked region not found: {region_id}")
+
+            existing = session.locked_regions[region_index]
+            normalized = self._normalize_locked_regions(
+                session,
+                [
+                    {
+                        "region_id": existing.region_id,
+                        "label": existing.label,
+                        "created_at": existing.created_at,
+                        "source": existing.source,
+                        "points": points,
+                    }
+                ],
+            )
+            if not normalized:
+                raise ValueError("Locked region requires at least 3 distinct points and a non-trivial polygon area.")
+
+            session.locked_regions[region_index] = normalized[0]
+            current = session.current_history()
+            base_mask = self.inference_service.mask_from_rle(base_history.mask_rle)
+            base_logits = self._ensure_history_logits(session, base_history)
+            combined_mask, updated_logits = self._apply_locked_regions_to_mask_and_logits(
+                session,
+                base_mask,
+                base_logits,
+            )
+
+            history_index = sum(1 for item in session.history if item.kind == "region_edit") + 1
+            history_id = f"region_edit_{uuid4().hex[:12]}"
+            created_at = utc_now_iso()
+            new_history = self._build_history_from_mask_and_logits(
+                session=session,
+                current=current,
+                history_id=history_id,
+                name=f"region-edit{history_index}",
+                kind="region_edit",
+                created_at=created_at,
+                mask=combined_mask,
                 logits=updated_logits,
                 score=current.score,
             )

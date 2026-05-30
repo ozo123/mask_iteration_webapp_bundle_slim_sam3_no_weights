@@ -394,6 +394,62 @@ def test_locked_regions_background_wins_even_when_added_first(tmp_path):
     assert float(logits[0, 4, 4]) == -32.0
 
 
+def test_update_locked_region_replaces_points_and_clamps_to_image_bounds(tmp_path):
+    target = _target(tmp_path)
+    target_store = UploadedTargetStore(tmp_path / "runs")
+    session_store = SessionStore(tmp_path / "sessions")
+    inference = RecordingIterationInference()
+    service = MaskIterationService(target_store, session_store, inference)
+    initial_mask = np.zeros((10, 10), dtype=bool)
+    session = SessionState(
+        schema_version=1,
+        session_id=target.key,
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+        target=target,
+        prompt_box_xyxy=[2.0, 2.0, 6.0, 6.0],
+        system_prompt_points=[],
+        working_points=[],
+        line_strokes=[],
+        locked_regions=[_locked_region("fg", 1, [(1, 1), (5, 1), (5, 5), (1, 5)])],
+        text_prompt="",
+        history=[
+            HistoryRecord(
+                history_id="init",
+                parent_history_id=None,
+                name="init",
+                kind="initial",
+                created_at="2026-01-01T00:00:00+00:00",
+                score=0.75,
+                mask_rle={"mask": initial_mask.tolist()},
+                mask_area=0,
+                mask_bbox_xywh=None,
+                prompt_box_xyxy=[2.0, 2.0, 6.0, 6.0],
+            )
+        ],
+        current_history_id="init",
+    )
+    session_store.save_session(session)
+
+    payload = service.update_locked_region(
+        target.key,
+        "fg",
+        [{"x": -5, "y": -7}, {"x": 9, "y": 0}, {"x": 9, "y": 9}, {"x": 0, "y": 9}],
+    )
+
+    updated = session_store.load_session(target.key)
+    assert updated is not None
+    assert payload["session"]["current_history_id"].startswith("region_edit_")
+    assert updated.current_history().kind == "region_edit"
+    assert updated.locked_regions[0].region_id == "fg"
+    assert [(point.x, point.y) for point in updated.locked_regions[0].points] == [
+        (0.0, 0.0),
+        (9.0, 0.0),
+        (9.0, 9.0),
+        (0.0, 9.0),
+    ]
+
+
 def test_iteration_strips_generated_points_before_inference(tmp_path):
     target = _target(tmp_path)
     target_store = UploadedTargetStore(tmp_path / "runs")

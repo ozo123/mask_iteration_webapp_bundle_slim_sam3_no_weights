@@ -259,3 +259,41 @@ def test_locked_region_draft_has_point_undo_button():
     assert "function undoDrawingRegionPoint" in html
     assert "data-region-undo" in list_body
     assert "el.undoRegionPointBtn.disabled = !hasSession || state.busy || !hasRegionDraft" in html
+
+
+def test_locked_region_vertices_are_editable_after_commit():
+    html = _html()
+
+    assert "hoverLockedRegionPoint" in html
+    assert "function getLockedRegionVertexAtEvent" in html
+    assert "function beginLockedRegionPointDrag" in html
+    assert "function finishLockedRegionPointDrag" in html
+    assert "function deleteLockedRegionPoint" in html
+    assert "/lock-region/update" in html
+    assert 'state.drag.mode === "locked-region-point"' in html
+
+
+def test_locked_region_editing_clamps_points_to_image_bounds():
+    html = _html()
+
+    client_start = html.index("function clientToImageXY")
+    client_body = html[client_start:html.index("async function addPointAtEvent", client_start)]
+
+    assert "allowOutside" in client_body
+    assert "Number(target.image_width) - 1" in client_body
+    assert "Number(target.image_height) - 1" in client_body
+    assert "clientToImageXY(event, { allowOutside: true })" in html
+    assert "function clampImagePoint" in html
+
+
+def test_canvas_uses_crosshair_cursor_for_precise_clicking():
+    html = _html()
+
+    canvas_start = html.index("canvas {")
+    canvas_block = html[canvas_start:html.index("}", canvas_start)]
+    hover_start = html.index("canvas.locked-point-hover")
+    hover_rule = html[hover_start:html.index("}", hover_start)]
+
+    assert "cursor: crosshair" in canvas_block
+    assert "cursor: crosshair" in hover_rule
+    assert "canvas.dragging { cursor: grabbing; }" in html

@@ -452,10 +452,11 @@
       border-radius: var(--radius);
       background: #111923;
       box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
-      cursor: grab;
+      cursor: crosshair;
       user-select: none;
     }
     canvas.dragging { cursor: grabbing; }
+    canvas.locked-point-hover { cursor: crosshair; }
     .status,
     .empty {
       color: var(--muted);
@@ -1314,6 +1315,10 @@
         startPanX: 0,
         startPanY: 0,
         mode: "",
+        lockedRegionId: "",
+        lockedRegionIndex: -1,
+        lockedPointIndex: -1,
+        lockedOriginalPoints: null,
       },
       drawingStroke: {
         active: false,
@@ -1325,6 +1330,7 @@
         hoverPoint: null,
       },
       hoverPrompt: null,
+      hoverLockedRegionPoint: null,
     };
 
     function clamp(value, min, max) {
@@ -1338,6 +1344,15 @@
     function distanceBetweenPoints(a, b) {
       if (!a || !b) return Infinity;
       return Math.hypot(Number(a.x) - Number(b.x), Number(a.y) - Number(b.y));
+    }
+
+    function clampImagePoint(point) {
+      const target = getCurrentTarget();
+      if (!target || !point) return null;
+      return {
+        x: clamp(Number(point.x), 0, Math.max(0, Number(target.image_width) - 1)),
+        y: clamp(Number(point.y), 0, Math.max(0, Number(target.image_height) - 1)),
+      };
     }
 
     function computePolygonArea(points) {
@@ -1369,7 +1384,7 @@
     }
 
     function isLockedRegionHistory(item) {
-      return Boolean(item && (item.kind === "region_lock" || item.kind === "region_unlock"));
+      return Boolean(item && (item.kind === "region_lock" || item.kind === "region_unlock" || item.kind === "region_edit"));
     }
 
     function getDisplayMaskHistory() {
@@ -1475,13 +1490,14 @@
       const distinct = [];
       const duplicateThreshold = 2.5;
       points.forEach((point) => {
-        if (!point) return;
-        if (distinct.some((existing) => distanceBetweenPoints(existing, point) <= duplicateThreshold)) {
+        const clampedPoint = clampImagePoint(point);
+        if (!clampedPoint) return;
+        if (distinct.some((existing) => distanceBetweenPoints(existing, clampedPoint) <= duplicateThreshold)) {
           return;
         }
         distinct.push({
-          x: Number(point.x),
-          y: Number(point.y),
+          x: Number(clampedPoint.x),
+          y: Number(clampedPoint.y),
         });
       });
       if (distinct.length < 3) return null;
@@ -2363,6 +2379,57 @@
       });
     }
 
+    function isHoveredLockedRegionPoint(regionId, pointIndex) {
+      return Boolean(
+        state.hoverLockedRegionPoint
+        && state.hoverLockedRegionPoint.regionId === regionId
+        && state.hoverLockedRegionPoint.pointIndex === pointIndex
+      );
+    }
+
+    function getLockedRegionVertexAtEvent(event) {
+      if (!state.session || !state.image || !state.showLockedRegions) return null;
+      const regions = state.session.locked_regions || [];
+      let best = null;
+      let bestDistance = Infinity;
+      const hitRadius = 11;
+      for (let regionIndex = regions.length - 1; regionIndex >= 0; regionIndex -= 1) {
+        const region = regions[regionIndex];
+        const points = region.points || [];
+        for (let pointIndex = points.length - 1; pointIndex >= 0; pointIndex -= 1) {
+          const clientPoint = imagePointToClientXY(points[pointIndex]);
+          if (!clientPoint) continue;
+          const distance = Math.hypot(event.clientX - clientPoint.x, event.clientY - clientPoint.y);
+          if (distance <= hitRadius && distance < bestDistance) {
+            bestDistance = distance;
+            best = {
+              region,
+              regionId: region.region_id || `region_${regionIndex}`,
+              regionIndex,
+              pointIndex,
+            };
+          }
+        }
+      }
+      return best;
+    }
+
+    function setHoveredLockedRegionPoint(hit) {
+      const nextHover = hit ? { regionId: hit.regionId, pointIndex: hit.pointIndex } : null;
+      const currentHover = state.hoverLockedRegionPoint;
+      const unchanged = (!currentHover && !nextHover)
+        || (
+          currentHover
+          && nextHover
+          && currentHover.regionId === nextHover.regionId
+          && currentHover.pointIndex === nextHover.pointIndex
+        );
+      if (unchanged) return;
+      state.hoverLockedRegionPoint = nextHover;
+      el.viewer.classList.toggle("locked-point-hover", Boolean(nextHover));
+      renderCanvas();
+    }
+
     function renderPointList() {
       if (!state.session) {
         el.pointList.innerHTML = `<div class="empty">暂无打开的会话。</div>`;
@@ -2949,6 +3016,34 @@
         ctx.lineWidth = hovered ? 3.4 : 1.4;
         ctx.fill();
         ctx.stroke();
+        const regionId = region.region_id || `region_${regionIndex}`;
+        points.forEach((point, pointIndex) => {
+          const x = Number(point.x) - crop.x0;
+          const y = Number(point.y) - crop.y0;
+          const pointHovered = isHoveredLockedRegionPoint(regionId, pointIndex);
+          if (x < -24 || y < -24 || x > crop.width + 24 || y > crop.height + 24) {
+            return;
+          }
+          if (pointHovered) {
+            ctx.beginPath();
+            ctx.arc(x, y, 9, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.24)`;
+            ctx.fill();
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.94)";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+          ctx.beginPath();
+          ctx.arc(x, y, pointHovered ? 5.8 : 3.4, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.98)`;
+          ctx.fill();
+          ctx.lineWidth = pointHovered ? 1.4 : 0.8;
+          ctx.strokeStyle = pointHovered ? "rgba(9, 16, 24, 1)" : "rgba(255, 255, 255, 0.86)";
+          ctx.stroke();
+          if (pointHovered) {
+            drawPromptLabel(ctx, `lock ${regionIndex + 1}.${pointIndex + 1}`, x, y);
+          }
+        });
         if (hovered) {
           const first = points[0];
           drawPromptLabel(ctx, `lock ${regionIndex + 1}`, Number(first.x) - crop.x0, Number(first.y) - crop.y0);
@@ -3152,6 +3247,8 @@
       state.maskCache.clear();
       state.drawingStroke.active = false;
       state.drawingStroke.points = [];
+      state.hoverLockedRegionPoint = null;
+      el.viewer.classList.remove("locked-point-hover");
       resetDrawingRegion();
       el.textPromptInput.value = "";
       renderAll();
@@ -3209,6 +3306,8 @@
       markCurrentTargetProcessed(state.session);
       state.maskCache.clear();
       resetDrawingRegion();
+      state.hoverLockedRegionPoint = null;
+      el.viewer.classList.remove("locked-point-hover");
       state.drawingStroke.active = false;
       state.drawingStroke.points = [];
       if (!state.compareHistoryId || !state.session.history.some((item) => item.history_id === state.compareHistoryId)) {
@@ -4164,6 +4263,115 @@
       }
     }
 
+    async function updateLockedRegion(regionId, regionPoints) {
+      if (!state.session || !regionId || !regionPoints || regionPoints.length < 3) {
+        renderCanvas();
+        return false;
+      }
+      try {
+        setBusy("Updating locked region...");
+        const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/lock-region/update`, {
+          region_id: regionId,
+          points: regionPoints,
+        });
+        applySessionPayload(payload);
+        clearBusy("Locked region updated.");
+        return true;
+      } catch (error) {
+        state.busy = false;
+        renderButtons();
+        setStatus(error.message || String(error), true);
+        return false;
+      }
+    }
+
+    async function deleteLockedRegionPoint(hit) {
+      if (!state.session || state.busy || !hit || !hit.region) return false;
+      const points = (hit.region.points || []).map((point) => clampImagePoint(point)).filter(Boolean);
+      if (points.length <= 3) {
+        setStatus("Locked region needs at least 3 points. Drag this point or delete the whole region instead.", true);
+        return false;
+      }
+      const ok = window.confirm(`Delete point ${hit.pointIndex + 1} from this locked region?`);
+      if (!ok) return false;
+      const nextPoints = points.filter((_, index) => index !== hit.pointIndex);
+      const normalized = normalizeRegionPointsForSave(nextPoints);
+      if (!normalized) {
+        setStatus("Deleting this point would make the locked region invalid.", true);
+        return false;
+      }
+      return updateLockedRegion(hit.regionId, normalized);
+    }
+
+    function beginLockedRegionPointDrag(event, hit) {
+      if (!state.session || state.busy || !hit || !hit.region) return false;
+      event.preventDefault();
+      state.drag.active = true;
+      state.drag.moved = false;
+      state.drag.mode = "locked-region-point";
+      state.drag.startClientX = event.clientX;
+      state.drag.startClientY = event.clientY;
+      state.drag.startPanX = state.panX;
+      state.drag.startPanY = state.panY;
+      state.drag.lockedRegionId = hit.regionId;
+      state.drag.lockedRegionIndex = hit.regionIndex;
+      state.drag.lockedPointIndex = hit.pointIndex;
+      state.drag.lockedOriginalPoints = (hit.region.points || []).map((point) => ({ x: Number(point.x), y: Number(point.y) }));
+      state.hoverLockedRegionPoint = { regionId: hit.regionId, pointIndex: hit.pointIndex };
+      el.viewer.classList.add("dragging");
+      renderCanvas();
+      return true;
+    }
+
+    function restoreLockedRegionDragSnapshot() {
+      const region = (state.session && state.session.locked_regions || [])[state.drag.lockedRegionIndex];
+      if (region && state.drag.lockedOriginalPoints) {
+        region.points = state.drag.lockedOriginalPoints.map((point) => ({ x: Number(point.x), y: Number(point.y) }));
+      }
+    }
+
+    function resetLockedRegionDragState() {
+      state.drag.lockedRegionId = "";
+      state.drag.lockedRegionIndex = -1;
+      state.drag.lockedPointIndex = -1;
+      state.drag.lockedOriginalPoints = null;
+      el.viewer.classList.remove("dragging");
+    }
+
+    async function finishLockedRegionPointDrag(moved) {
+      const region = (state.session && state.session.locked_regions || [])[state.drag.lockedRegionIndex];
+      const regionId = state.drag.lockedRegionId;
+      if (!region || !regionId) {
+        resetLockedRegionDragState();
+        renderCanvas();
+        return;
+      }
+      if (!moved) {
+        resetLockedRegionDragState();
+        renderCanvas();
+        return;
+      }
+      const normalized = normalizeRegionPointsForSave(region.points || []);
+      if (!normalized) {
+        restoreLockedRegionDragSnapshot();
+        resetLockedRegionDragState();
+        setStatus("Moving this point would make the locked region invalid.", true);
+        renderAll();
+        return;
+      }
+      const originalPoints = state.drag.lockedOriginalPoints;
+      const regionIndex = state.drag.lockedRegionIndex;
+      resetLockedRegionDragState();
+      const ok = await updateLockedRegion(regionId, normalized);
+      if (!ok) {
+        const restoreRegion = (state.session && state.session.locked_regions || [])[regionIndex];
+        if (restoreRegion && originalPoints) {
+          restoreRegion.points = originalPoints.map((point) => ({ x: Number(point.x), y: Number(point.y) }));
+        }
+        renderAll();
+      }
+    }
+
     function removeTargetsAndStayNearCurrent(shouldRemove) {
       const currentKey = state.selectedTargetKey;
       const previousFilteredTargets = state.filteredTargets.slice();
@@ -4279,23 +4487,26 @@
       }
     }
 
-    function clientToImageXY(event) {
+    function clientToImageXY(event, options = {}) {
       const target = getCurrentTarget();
       if (!target || !state.session) return null;
       const crop = computeCropBox(target);
       const rect = el.viewer.getBoundingClientRect();
-      if (
+      const allowOutside = Boolean(options.allowOutside);
+      if (!allowOutside && (
         event.clientX < rect.left ||
         event.clientX > rect.right ||
         event.clientY < rect.top ||
         event.clientY > rect.bottom
-      ) {
+      )) {
         return null;
       }
       const scaleX = crop.width / Math.max(1, rect.width);
       const scaleY = crop.height / Math.max(1, rect.height);
-      const x = crop.x0 + clamp((event.clientX - rect.left) * scaleX, 0, crop.width - 1);
-      const y = crop.y0 + clamp((event.clientY - rect.top) * scaleY, 0, crop.height - 1);
+      const rawX = crop.x0 + ((event.clientX - rect.left) * scaleX);
+      const rawY = crop.y0 + ((event.clientY - rect.top) * scaleY);
+      const x = clamp(rawX, 0, Math.max(0, Number(target.image_width) - 1));
+      const y = clamp(rawY, 0, Math.max(0, Number(target.image_height) - 1));
       return { x, y };
     }
 
@@ -4344,6 +4555,7 @@
       state.drag.active = false;
       state.drag.moved = false;
       state.drag.mode = "";
+      resetLockedRegionDragState();
       state.drawingStroke.active = false;
       state.drawingStroke.points = [];
       resetDrawingRegion();
@@ -4357,7 +4569,13 @@
 
     function handleCanvasMouseDown(event) {
       if (!state.session || state.busy) return;
+      const lockedVertexHit = getLockedRegionVertexAtEvent(event);
       if (event.button === 2) {
+        if (lockedVertexHit) {
+          event.preventDefault();
+          void deleteLockedRegionPoint(lockedVertexHit);
+          return;
+        }
         event.preventDefault();
         state.drag.active = true;
         state.drag.moved = false;
@@ -4370,6 +4588,9 @@
         return;
       }
       if (event.button !== 0) return;
+      if (lockedVertexHit && beginLockedRegionPointDrag(event, lockedVertexHit)) {
+        return;
+      }
       if (state.currentTool === "line") {
         const xy = clientToImageXY(event);
         if (!xy) return;
@@ -4432,8 +4653,25 @@
       if (state.drag.active) {
         const dx = event.clientX - state.drag.startClientX;
         const dy = event.clientY - state.drag.startClientY;
-        if (!state.drag.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        const moveThreshold = state.drag.mode === "locked-region-point" ? 1 : 4;
+        if (!state.drag.moved && (Math.abs(dx) > moveThreshold || Math.abs(dy) > moveThreshold)) {
           state.drag.moved = true;
+        }
+        if (state.drag.mode === "locked-region-point") {
+          if (!state.drag.moved) return;
+          const xy = clientToImageXY(event, { allowOutside: true });
+          const region = (state.session && state.session.locked_regions || [])[state.drag.lockedRegionIndex];
+          if (xy && region && (region.points || [])[state.drag.lockedPointIndex]) {
+            region.points[state.drag.lockedPointIndex] = xy;
+            state.hoverLockedRegionPoint = {
+              regionId: state.drag.lockedRegionId,
+              pointIndex: state.drag.lockedPointIndex,
+            };
+            renderCanvas();
+            renderLockedRegionList();
+            renderPreview();
+          }
+          return;
         }
         if (!state.drag.moved) return;
         if (state.drag.mode !== "pan") return;
@@ -4454,7 +4692,7 @@
         return;
       }
       if (state.currentTool === "region" && state.drawingRegion.active) {
-        const xy = clientToImageXY(event);
+        const xy = clientToImageXY(event, { allowOutside: true });
         const lastHover = state.drawingRegion.hoverPoint;
         if (!xy) {
           if (lastHover) {
@@ -4469,9 +4707,18 @@
         }
         return;
       }
+      setHoveredLockedRegionPoint(getLockedRegionVertexAtEvent(event));
     }
 
     async function handleCanvasMouseUp(event) {
+      if (state.drag.active && state.drag.mode === "locked-region-point") {
+        const moved = state.drag.moved;
+        state.drag.active = false;
+        state.drag.moved = false;
+        state.drag.mode = "";
+        await finishLockedRegionPointDrag(moved);
+        return;
+      }
       if (state.currentTool === "line" && state.drawingStroke.active) {
         const strokePoints = state.drawingStroke.points.slice();
         state.drawingStroke.active = false;
