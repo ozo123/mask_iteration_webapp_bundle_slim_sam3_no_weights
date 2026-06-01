@@ -1,3 +1,4 @@
+import csv
 import json
 import sys
 import base64
@@ -361,6 +362,32 @@ def test_mark_wrong_unsaved_target_records_quality_and_autosaves_state(tmp_path)
     assert "wrong" in quality_csv.read_text(encoding="utf-8")
 
 
+def test_mark_wrong_target_toggles_back_to_keep(tmp_path):
+    target_store = UploadedTargetStore(tmp_path / "runs")
+    service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
+    target = _target(tmp_path)
+    target_store._targets_by_key[target.key] = target
+    session = _session(target, current_history_id="iter1")
+    service._save_session_outputs(session)
+
+    service.mark_wrong_target("target_a")
+    payload = service.mark_wrong_target("target_a")
+
+    keep_state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
+    keep_state = json.loads(keep_state_path.read_text(encoding="utf-8"))
+    restored_session = service.session_store.load_session("target_a")
+    assert payload["target_status"] == "keep"
+    assert restored_session is not None
+    assert restored_session.target_status == "keep"
+    assert restored_session.is_deleted is False
+    assert keep_state["target_status"] == "keep"
+    assert keep_state["sessions"][0]["target_status"] == "keep"
+    quality_csv = tmp_path / "runs" / "copy_a" / "quality_marked_targets.csv"
+    rows = list(csv.DictReader(quality_csv.open("r", encoding="utf-8", newline="")))
+    assert [row["status"] for row in rows[-2:]] == ["wrong", "keep"]
+    assert rows[-1]["reason"] == "restored_from_wrong"
+
+
 def test_mark_difficult_target_keeps_data_and_records_csv(tmp_path):
     target_store = UploadedTargetStore(tmp_path / "runs")
     service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
@@ -383,6 +410,32 @@ def test_mark_difficult_target_keeps_data_and_records_csv(tmp_path):
     quality_text = quality_csv.read_text(encoding="utf-8")
     assert "difficult" in quality_text
     assert "hard edge" in quality_text
+
+
+def test_mark_difficult_target_toggles_back_to_keep(tmp_path):
+    target_store = UploadedTargetStore(tmp_path / "runs")
+    service = MaskIterationService(target_store, SessionStore(tmp_path / "sessions"), DummyInference())
+    target = _target(tmp_path)
+    target_store._targets_by_key[target.key] = target
+    session = _session(target, current_history_id="iter1")
+    service._save_session_outputs(session)
+
+    service.mark_difficult_target("target_a", reason="hard edge")
+    payload = service.mark_difficult_target("target_a", reason="hard edge")
+
+    keep_state_path = tmp_path / "runs" / "copy_a" / "annotations" / RUN_KEEP_DIR / RUN_STATE_DIR / "a.json"
+    keep_state = json.loads(keep_state_path.read_text(encoding="utf-8"))
+    restored_session = service.session_store.load_session("target_a")
+    assert payload["target_status"] == "keep"
+    assert restored_session is not None
+    assert restored_session.target_status == "keep"
+    assert restored_session.is_deleted is False
+    assert keep_state["target_status"] == "keep"
+    assert keep_state["sessions"][0]["target_status"] == "keep"
+    quality_csv = tmp_path / "runs" / "copy_a" / "quality_marked_targets.csv"
+    rows = list(csv.DictReader(quality_csv.open("r", encoding="utf-8", newline="")))
+    assert [row["status"] for row in rows[-2:]] == ["difficult", "keep"]
+    assert rows[-1]["reason"] == "restored_from_difficult"
 
 
 def test_mark_difficult_unsaved_target_records_quality_and_autosaves_state(tmp_path):

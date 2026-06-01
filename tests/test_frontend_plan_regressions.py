@@ -87,6 +87,19 @@ def test_text_prompt_has_current_target_status_button():
     assert ".target-status-button.status-wrong" in html
 
 
+def test_quality_action_buttons_toggle_and_sync_with_status():
+    html = _html()
+
+    assert "function renderQualityActionButtons" in html
+    assert "currentTargetStatusKey() === \"wrong\"" in html
+    assert "currentTargetStatusKey() === \"difficult\"" in html
+    assert "恢复正常" in html
+    assert "Press again to restore normal." in html
+    buttons_start = html.index("function renderButtons")
+    buttons_body = html[buttons_start:html.index("function renderSaveButtonState", buttons_start)]
+    assert "renderQualityActionButtons()" in buttons_body
+
+
 def test_encoded_quality_mask_colors_do_not_affect_iteration_masks():
     html = _html()
 

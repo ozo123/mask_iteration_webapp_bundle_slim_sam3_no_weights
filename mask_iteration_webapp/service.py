@@ -3444,6 +3444,7 @@ class MaskIterationService:
         status: str,
         marked_at: str,
         reason: str | None = None,
+        dedupe: bool = True,
     ) -> None:
         target = session.target
         path = self._quality_records_csv_path(target.import_id)
@@ -3470,7 +3471,7 @@ class MaskIterationService:
                     for row in csv.DictReader(handle):
                         existing_keys.add((str(row.get("target_key") or ""), str(row.get("status") or "")))
         record_key = (target.key, status)
-        if record_key in existing_keys:
+        if dedupe and record_key in existing_keys:
             return
         write_header = not path.exists() or path.stat().st_size == 0
         with path.open("a", encoding="utf-8", newline="") as handle:
@@ -3512,6 +3513,7 @@ class MaskIterationService:
                     TARGET_STATUS_DIFFICULT,
                     now,
                     reason=reason or "difficult_segmentation",
+                    dedupe=False,
                 )
                 record = {
                     "schema_version": 1,
@@ -5017,17 +5019,51 @@ class MaskIterationService:
                 "bootstrap": self.bootstrap_payload(),
             }
 
+    def _clear_quality_target_status(self, session: SessionState, cleared_at: str) -> dict[str, Any]:
+        previous_status = session.target_status if session.target_status in TARGET_QUALITY_STATUSES else TARGET_STATUS_KEEP
+        session.is_deleted = False
+        session.target_status = TARGET_STATUS_KEEP
+        session.deleted_at = None
+        session.updated_at = cleared_at
+        self._save_session_outputs(session)
+        self._save_outputs_if_current_mask_saved(session)
+        self._append_quality_target_record(
+            session,
+            TARGET_STATUS_KEEP,
+            cleared_at,
+            reason=f"restored_from_{previous_status}",
+            dedupe=False,
+        )
+        return {
+            "ok": True,
+            "target_status": TARGET_STATUS_KEEP,
+            "marked_at": cleared_at,
+            "target": session.target.to_dict(),
+            "quality_records_path": str(self._quality_records_csv_path(session.target.import_id).resolve()),
+            "bootstrap": self.bootstrap_payload(),
+        }
+
     def mark_wrong_target(self, target_key: str) -> dict[str, Any]:
         with self._lock:
             session = self._require_session(target_key)
             marked_at = utc_now_iso()
+            if session.target_status == TARGET_STATUS_WRONG:
+                payload = self._clear_quality_target_status(session, marked_at)
+                payload["wrong_target_key"] = target_key
+                return payload
             session.is_deleted = False
             session.target_status = TARGET_STATUS_WRONG
             session.deleted_at = None
             session.updated_at = marked_at
             self._save_session_outputs(session)
             self._save_outputs_if_current_mask_saved(session)
-            self._append_quality_target_record(session, TARGET_STATUS_WRONG, marked_at, reason="wrong_target")
+            self._append_quality_target_record(
+                session,
+                TARGET_STATUS_WRONG,
+                marked_at,
+                reason="wrong_target",
+                dedupe=False,
+            )
             target = session.target
             return {
                 "ok": True,
@@ -5090,6 +5126,12 @@ class MaskIterationService:
             }
 
     def mark_difficult_target(self, target_key: str, reason: str | None = None) -> dict[str, Any]:
+        with self._lock:
+            session = self._require_session(target_key)
+            if session.target_status == TARGET_STATUS_DIFFICULT:
+                payload = self._clear_quality_target_status(session, utc_now_iso())
+                payload["difficult_target_key"] = target_key
+                return payload
         return self._mark_session_issue(target_key, "difficult", reason=reason)
 
     def mark_blurry_image(self, target_key: str, reason: str | None = None) -> dict[str, Any]:

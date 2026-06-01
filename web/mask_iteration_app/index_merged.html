@@ -1665,6 +1665,20 @@
       el.targetStatusBtn.classList.add(status.className);
     }
 
+    function renderQualityActionButtons() {
+      const status = currentTargetStatusKey();
+      if (el.markWrongTargetBtn) {
+        const isWrong = status === "wrong";
+        el.markWrongTargetBtn.textContent = isWrong ? "恢复正常" : "标记错误框";
+        el.markWrongTargetBtn.title = isWrong ? "当前为错误框，再按一次恢复正常" : "标记当前框为错误框";
+      }
+      if (el.markDifficultBtn) {
+        const isDifficult = status === "difficult";
+        el.markDifficultBtn.textContent = isDifficult ? "恢复正常" : "标记难处理";
+        el.markDifficultBtn.title = isDifficult ? "当前为难处理，再按一次恢复正常" : "标记当前框为难处理";
+      }
+    }
+
     function recordRestoredSessions(payload) {
       for (const key of (payload && payload.restored_session_keys) || []) {
         if (key) {
@@ -1861,6 +1875,7 @@
       el.cancelRegionBtn.disabled = !hasSession || state.busy || !hasRegionDraft;
       el.markWrongTargetBtn.disabled = !hasSession || state.busy;
       el.markDifficultBtn.disabled = !hasSession || state.busy;
+      renderQualityActionButtons();
       el.markBlurryImageBtn.disabled = !hasSession || state.busy;
       el.deleteHistoryBtn.disabled = !hasSession || state.busy || !state.selectedHistoryIds.size;
       el.validateRunBtn.disabled = !hasSession || state.busy || !validateAvailable;
@@ -4409,22 +4424,23 @@
     async function handleMarkWrongTarget() {
       if (!state.session) return;
       const target = state.session.target;
-      const ok = window.confirm(`标记当前框为错误框？\n${target.category_name} | ${target.annotation_id}`);
+      const restoreNormal = currentTargetStatusKey() === "wrong";
+      const ok = window.confirm(`${restoreNormal ? "恢复当前框为正常状态" : "标记当前框为错误框"}？\n${target.category_name} | ${target.annotation_id}`);
       if (!ok) return;
       try {
-        setBusy("Marking current target as wrong...");
+        setBusy(restoreNormal ? "Restoring target status..." : "Marking current target as wrong...");
         const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/mark-wrong-target`, {});
         if (payload.bootstrap) {
           state.bootstrap = payload.bootstrap;
         }
         if (state.session) {
-          state.session.target_status = payload.target_status || "wrong";
+          state.session.target_status = payload.target_status || (restoreNormal ? "keep" : "wrong");
           state.session.is_deleted = false;
           state.session.deleted_at = null;
           updateQueuedTargetStatus(state.session.session_id, state.session.target_status);
         }
         renderAll();
-        clearBusy("Current target marked wrong. You can keep segmenting this target.");
+        clearBusy(restoreNormal ? "Current target restored to normal." : "Current target marked wrong. Press again to restore normal.");
       } catch (error) {
         state.busy = false;
         renderButtons();
@@ -4435,10 +4451,11 @@
     async function handleMarkDifficult() {
       if (!state.session) return;
       const target = state.session.target;
-      const ok = window.confirm(`标记当前框为难处理？\n${target.category_name} | ${target.annotation_id}`);
+      const restoreNormal = currentTargetStatusKey() === "difficult";
+      const ok = window.confirm(`${restoreNormal ? "恢复当前框为正常状态" : "标记当前框为难处理"}？\n${target.category_name} | ${target.annotation_id}`);
       if (!ok) return;
       try {
-        setBusy("Marking difficult target...");
+        setBusy(restoreNormal ? "Restoring target status..." : "Marking difficult target...");
         const payload = await apiPost(`/api/sessions/${encodeURIComponent(state.session.session_id)}/mark-difficult`, {
           reason: "difficult_segmentation",
         });
@@ -4446,13 +4463,13 @@
           state.bootstrap = payload.bootstrap;
         }
         if (state.session) {
-          state.session.target_status = payload.target_status || "difficult";
+          state.session.target_status = payload.target_status || (restoreNormal ? "keep" : "difficult");
           state.session.is_deleted = false;
           state.session.deleted_at = null;
           updateQueuedTargetStatus(state.session.session_id, state.session.target_status);
         }
         renderAll();
-        clearBusy("Marked difficult target. You can keep segmenting this target.");
+        clearBusy(restoreNormal ? "Current target restored to normal." : "Marked difficult target. Press again to restore normal.");
       } catch (error) {
         state.busy = false;
         renderButtons();
